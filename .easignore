@@ -39,7 +39,6 @@ yarn-error.*
 # Metro-only. Preview/production URLs come from eas.json env, not .env.
 .env
 .env*.local
-.env.sentry-build-plugin
 
 # typescript
 *.tsbuildinfo
@@ -63,5 +62,5 @@ dist-update/
 temp
 
 # Do not ignore google-services.json / GoogleService-Info.plist (or the -dev
-# copies). They are gitignored so they stay off GitHub; the archive still needs
-# them for the Firebase / Google Sign-in plugins.
+# copies), or .env.sentry-build-plugin. They are gitignored so they stay off
+# GitHub; the archive still needs them for Firebase and Sentry source-map upload.
