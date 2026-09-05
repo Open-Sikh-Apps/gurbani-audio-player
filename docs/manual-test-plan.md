@@ -1,6 +1,6 @@
 # Manual test plan
 
-Device checklist for the Play-bound **preview APK** (`runtimeVersion` `1.0.0`). Metro / `expo start` does not enable OTA, Sentry native, or Firebase.
+Device checklist for the Play-bound **preview APK** (`runtimeVersion` `1.0.3`). Metro / `expo start` does not enable OTA, Sentry native, or Firebase.
 
 Install **this** APK. Uninstall the previous preview first. Android: set the app to **Unrestricted battery**.
 
@@ -110,7 +110,7 @@ Step-by-step: [crash-reporting-test.md](./crash-reporting-test.md).
 
 ## 8. OTA (after this APK is installed)
 
-OTA is JS + assets only. `runtimeVersion` must stay `1.0.0`. Icons, Firebase, Sentry native, and `expo-updates` itself cannot OTA.
+OTA is JS + assets only. `runtimeVersion` must stay `1.0.3` until the next native bump. Icons, Firebase, Sentry native, and `expo-updates` itself cannot OTA.
 
 1. Publish: `npm run ota:publish` (channel `preview`, Worker `https://updatesgurbaniaudioplayer.opensikhapps.com`).
 2. On the **same** installed APK:
@@ -135,6 +135,52 @@ OTA is JS + assets only. `runtimeVersion` must stay `1.0.0`. Icons, Firebase, Se
 ---
 
 
+
+## 10. Custom catalogue host (this JS)
+
+`eas.json` now inlines `https://cataloguegurbaniaudioplayer.opensikhapps.com`. That URL is **not** in an already-installed APK/AAB until the next OTA (or a new binary). Metro uses `.env` only.
+
+**Desk (once):**
+
+```bash
+curl -sI "https://cataloguegurbaniaudioplayer.opensikhapps.com/catalogue.version.json"
+curl -s "https://cataloguegurbaniaudioplayer.opensikhapps.com/catalogue.version.json"
+```
+
+Expect `200`, TLS OK, JSON `{"version": …}` matching `pages.dev`.
+
+**Get the URL onto the phone**
+
+| What you are testing | How |
+|---|---|
+| Metro / `expo start` | Restart Metro after `.env` change. Not an APK test. |
+| Sideload **preview** APK (`runtimeVersion` `1.0.3`) | `OTA_ALLOW_NATIVE_CHANGE=1 npm run ota:publish` then cold start or Settings → Check for update. Fingerprint will complain because `eas.json` changed; the override is correct for this env-only edit. |
+| Play / **production** AAB | `OTA_ALLOW_NATIVE_CHANGE=1 OTA_CHANNEL=production npm run ota:publish` — only when you want store users on the new host. |
+
+Do not rebuild Android just for this URL.
+
+**On the device (after that JS is running):**
+
+- [ ] Cold start: Home lists sehaj paath / reciter collections (not mock). No Google picker.
+- [ ] Home overflow → **Refresh catalogue**: toast **Updating…**, list does not jump to the top.
+- [ ] Pull-to-refresh: spinner only (no **Updating…** toast).
+- [ ] Optional proof of host: Proxyman/Charles filter `cataloguegurbaniaudioplayer.opensikhapps.com` on `catalogue.version.json` / `catalogue.json`. Or Cloudflare analytics for that hostname. Blocking `*.pages.dev` must **not** break refresh.
+- [ ] Optional live bump: bump `catalogue.version.json` + `catalogue.json` in the catalogue repo, wait for CI, pull-to-refresh, new row/title appears.
+- [ ] Refresh **error**: stay NetInfo-online but break the **custom** host (not airplane). Toast **Could not refresh the catalogue. Showing the last saved copy.** Home must not blank.
+- [ ] Airplane: Home still shows the last saved catalogue; no refresh-error toast.
+
+**Android uninstall (already OK if you saw no picker):**
+
+- [ ] Uninstall → reinstall the same APK (no OTA required for this bit). Wizard again. Cold start still has no Google / Firebase UI.
+
+**iOS only (needs a new binary, not OTA):** the backup-exclusion plugin and Keychain wipe are native. After a new iOS prebuild/install:
+
+- [ ] Delete the app → reinstall that binary. Wizard runs. No Google picker on launch.
+- [ ] After finishing the wizard once, delete+reinstall again: wizard again (MMKV gone); still no picker.
+
+Crash last-run (system **Alert**, not a custom Modal): [crash-reporting-test.md](./crash-reporting-test.md) §B. Skip if you already passed §7 on this APK.
+
+---
 
 ## Punjabi pass
 

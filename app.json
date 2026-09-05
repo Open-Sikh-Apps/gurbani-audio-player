@@ -15,7 +15,7 @@
       "en": "./src/i18n/native-metadata/en.json",
       "pa": "./src/i18n/native-metadata/pa.json"
     },
-    "runtimeVersion": "1.0.3",
+    "runtimeVersion": "1.0.4",
     "updates": {
       "url": "https://updatesgurbaniaudioplayer.opensikhapps.com",
       "checkAutomatically": "NEVER",
@@ -30,6 +30,7 @@
       "associatedDomains": [
         "applinks:gurbaniaudioplayer.opensikhapps.com"
       ],
+      "usesIcloudStorage": false,
       "infoPlist": {
         "CFBundleAllowMixedLocalizations": true,
         "UIBackgroundModes": [
@@ -45,7 +46,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.opensikhapps.gurbaniaudioplayer",
-      "versionCode": 1,
+      "versionCode": 2,
       "googleServicesFile": "./google-services.json",
       "allowBackup": false,
       "permissions": [
@@ -88,6 +89,7 @@
       "expo-asset",
       "@react-native-vector-icons/material-icons",
       "./plugins/with-android-notification-icon",
+      "./plugins/with-ios-exclude-from-backup",
       [
         "expo-splash-screen",
         {

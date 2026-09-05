@@ -11,7 +11,7 @@ There is no in-app “crash me” button. Add a **temporary** throw, get that JS
 ## Before you start
 
 1. Confirm you are on the **preview APK** (not Expo Go / Metro).
-2. Note the APK’s `runtimeVersion` (test plan says `1.0.0`; `app.json` may have moved on). OTA only applies if the publish folder matches **that** binary. See [ota-updates.md](./ota-updates.md).
+2. Note the APK’s `runtimeVersion` (`app.json` is `1.0.3` today). OTA only applies if the publish folder matches **that** binary. See [ota-updates.md](./ota-updates.md).
 3. Open Sentry → org **jasdeep-singh-malhotra** → project **gurbaniaudioplayer** → **Issues**. Keep that tab open so you can match timestamps.
 
 Do the **Don’t send** pass first, then **Send**, so you can tell the two runs apart.
@@ -81,7 +81,7 @@ Force-quit and reopen. A process death resets the module `let`, so Home throws o
 3. App recovers the same way.
 4. Within a minute, Sentry should show an event with that error message. Open it and confirm it is a JS exception (not a native crash).
 
-You should **not** see the next-launch modal (“Crash report sent”) after a JS error. That modal is only for a **native** crash that killed the process.
+You should **not** see the next-launch alert (“Crash report sent”) after a JS error. That alert is only for a **native** crash that killed the process.
 
 Remove this throw (and publish) before starting part B.
 
@@ -89,17 +89,17 @@ Remove this throw (and publish) before starting part B.
 
 ## B. Native crash (optional)
 
-This path must **not** show Send / Don’t send. The native SDK sends on its own; the UI (`CrashLastRunNotice`) only mounts on the **next successful launch**, and only if Sentry saw a **process-killing** native crash (`Sentry.crashedLastRun() === true`) on the **same** OTA/binary as last time. A first launch of a new update (or Play Store APK) suppresses the modal even if Sentry still reports `true`.
+This path must **not** show Send / Don’t send. The native SDK sends on its own; the UI (`CrashLastRunNotice` → `Alert.alert`) only runs on the **next successful launch**, and only if Sentry saw a **process-killing** native crash (`Sentry.crashedLastRun() === true`) on the **same** OTA/binary as last time. A first launch of a new update (or Play Store APK) suppresses the alert even if Sentry still reports `true`. In-app Simple mode does not enlarge this alert (same as OTA / JS ErrorBoundary); system accessibility text size does.
 
 ### Do not use `Sentry.nativeCrash()` on this APK
 
 `Sentry.nativeCrash()` throws a Java `RuntimeException` from a void TurboModule. Expo Updates’ error-recovery handler catches that, tears down the React host, and **leaves the Activity up** (blank screen). The process does not die, so:
 
 - Sentry does **not** write a last-run crash marker
-- the next open is a normal launch (no **Crash report sent** modal)
+- the next open is a normal launch (no **Crash report sent** alert)
 - nothing useful shows in Sentry
 
-A persisted MMKV one-shot around that call only prevents a second blank screen. It cannot create the modal.
+A persisted MMKV one-shot around that call only prevents a second blank screen. It cannot create the alert.
 
 If that snippet is still in the running bundle, delete it from `src/screens/home.tsx` and `npm run ota:publish` so Home stays up.
 
@@ -122,13 +122,13 @@ adb shell kill -s SIGSEGV "$(adb shell pidof com.opensikhapps.gurbaniaudioplayer
 
 Wait a few seconds.
 
-### 2. Relaunch and check the modal
+### 2. Relaunch and check the alert
 
 1. Open the app from the launcher (new process).
-2. After splash / “Loading…”, you should get a **modal** (not `Alert.alert`):
+2. After splash / “Loading…”, you should get a **system** `Alert.alert` (not a custom Modal):
    - Title: **Crash report sent**
-   - Body: **A crash report was sent automatically. Email the sevaadars if you have concerns.**
-   - **Email** (opens the feedback mail composer) and **OK**
+   - Body: **A crash report was sent automatically. You can email the sevaadars regarding any problems or suggestions.**
+   - **OK** and **Email** (opens the feedback mail composer)
 3. There is **no** Send report / Don't send pair.
 4. **OK** dismisses it; **Email** dismisses and opens mail.
 5. Sentry should show a **native** crash (not the JS `Error` from part A). Force-quit / Recents swipe is **not** this test.
@@ -147,7 +147,7 @@ Do this on a **build without the throw**, or after Home is staying up.
    - Toast **Updating…** (not inline text on the page).
    - If the version is unchanged, that toast still appears briefly, then clears.
 3. Pull-to-refresh: the **RefreshControl** spinner runs; you should **not** get the **Updating…** toast (pull already has its own spinner).
-4. Refresh **error** (optional): stay “online” in NetInfo but make `https://gurbani-paath-player-catalogue.pages.dev` fail (Wi‑Fi with no internet often works). You want the toast **Could not refresh the catalogue. Showing the last saved copy.** Home must keep the last catalogue — it must not blank. Airplane mode is **not** this case: the store treats offline as idle, so there is no error toast.
+4. Refresh **error** (optional): stay “online” in NetInfo but make `https://cataloguegurbaniaudioplayer.opensikhapps.com` fail (Wi‑Fi with no internet often works). You want the toast **Could not refresh the catalogue. Showing the last saved copy.** Home must keep the last catalogue — it must not blank. Airplane mode is **not** this case: the store treats offline as idle, so there is no error toast.
 
 ---
 
@@ -161,4 +161,4 @@ Before anyone else keeps this APK/OTA:
 
 ---
 
-**Pass §7 when:** Don’t send sends nothing; Send shows a JS event; optional native crash auto-sends and the next launch is the Email/OK modal only; Home refresh uses toasts and does not jump; the debug throw is gone.
+**Pass §7 when:** Don’t send sends nothing; Send shows a JS event; optional native crash auto-sends and the next launch is the Email/OK alert only; Home refresh uses toasts and does not jump; the debug throw is gone.

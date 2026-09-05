@@ -1,3 +1,5 @@
+Historical notes (Gemini). The running pipeline is [ota-updates.md](./ota-updates.md) (self-hosted Worker + R2, local EAS AAB, `runtimeVersion` `1.0.3`).
+
 https://share.gemini.google/KnN5wpM4ecss
 
 Here is a brief summary of the completely free, self-hosted CI/CD and OTA update pipeline for your React Native app.

@@ -64,13 +64,21 @@ The channel is **baked into the binary** (`expo-channel-name`). `app.json` defau
 
 | Binary       | Profile      | Channel folder              | Publish                                      |
 | ------------ | ------------ | --------------------------- | -------------------------------------------- |
-| Sideload APK | `preview`    | `preview/android/1.0.0/`    | `npm run ota:publish`                        |
-| Play AAB     | `production` | `production/android/1.0.0/` | `OTA_CHANNEL=production npm run ota:publish` |
+| Sideload APK | `preview`    | `preview/android/1.0.3/`    | `npm run ota:publish`                        |
+| Play AAB     | `production` | `production/android/1.0.3/` | `OTA_CHANNEL=production npm run ota:publish` |
 
 
-Build the AAB from the same tree you publish. `versionCode` is manual (`app.json` `android.versionCode`); bump it before the next Play upload. `autoIncrement` is off.
+Build the AAB from the same tree you publish. Version fields are **independent**:
 
-Do **not** put `EXPO_PUBLIC_USE_MOCK_CATALOGUE=1` on a preview/production build — `app.config.ts` throws. Pages URLs come from `eas.json` env, not `.env`.
+| Field | Today | Bump when |
+|---|---|---|
+| `expo.version` | `1.0.0` | Store listing / marketing |
+| `android.versionCode` / `ios.buildNumber` | `1` | Every new binary uploaded to Play / App Store (`autoIncrement` is off — bump by hand) |
+| `runtimeVersion` | `1.0.3` | Android (or that platform’s) **native** surface changes. OTA folder is `{channel}/{platform}/{runtimeVersion}/` |
+
+They do not have to look the same. A Play upload can be `version` `1.0.0` + `versionCode` `2` + `runtimeVersion` `1.0.3`.
+
+Do **not** put `EXPO_PUBLIC_USE_MOCK_CATALOGUE=1` on a preview/production build — `app.config.ts` throws. Pages URLs come from `eas.json` env, not `.env`. Changing `EXPO_PUBLIC_CATALOGUE_BASE_URL` in `eas.json` **does** inlined into the next `expo export` / OTA JS. `ota:fingerprint-check` may still **fail** because `eas.json` is part of the native fingerprint hash (it can affect the Gradle env). That gate is not saying the URL cannot OTA — it is saying “this file also looks like native.” After an env-only `eas.json` edit, publish with `OTA_ALLOW_NATIVE_CHANGE=1` (or rebuild a binary if you also changed native). Metro `.env` never reaches `eas build --local`.
 
 ## Play AAB (local, no EAS cloud compile)
 
@@ -94,7 +102,9 @@ Edit `credentials.json` with the keystore and key passwords. `.gitignore` alread
 
 Do **not** `ota:publish` to `production` from the same tree as that AAB unless you intend old binaries to pick up that JS. Same-bytes publishes reuse the update id, so phones already running that Hermes skip. A **fresh** install of the AAB still applies once (embedded manifest has no launch hash). Publish production OTA when there is a JS change you want on phones that already installed an older AAB. The first such publish also stores the Android fingerprint baseline for that folder.
 
-Later iOS: keep `runtimeVersion` `1.0.0`. Android phones only read `production/android/1.0.0/` — they do not see `production/ios/…`. Ship iOS JS with `OTA_CHANNEL=production OTA_PLATFORMS=ios`. Do not bump `runtimeVersion` in `app.json` for iOS-only native; that would make later default publishes miss existing Android binaries. `expo.version` can stay `1.0.0`; iOS `buildNumber` is separate from Android `versionCode`.
+Later iOS: keep `runtimeVersion` the same as the shipping Android binary (`1.0.3` today). Android phones only read `production/android/1.0.3/` — they do not see `production/ios/…`. Ship iOS JS with `OTA_CHANNEL=production OTA_PLATFORMS=ios`. Do not bump the top-level `runtimeVersion` in `app.json` for iOS-only native; that would make later default publishes miss existing Android binaries. `expo.version` can stay `1.0.0`; iOS `buildNumber` is separate from Android `versionCode`.
+
+iOS has no `allowBackup: false`. `plugins/with-ios-exclude-from-backup.js` marks `Documents/mmkv`, `Documents/audio`, and Application Support `.expo-internal` as excluded from iCloud/Finder backup (same idea as Android Auto Backup off). `ios.usesIcloudStorage` is false. Delete+reinstall still wipes MMKV; native Google/Firebase Keychain is cleared when the wizard has not been completed (`src/native/ios-fresh-install.ts`). Needs a new iOS prebuild/binary.
 
 `eas submit` is not wired — upload the AAB in the Console. Preview APKs keep using `npm run build:android:preview` and the `preview` channel.
 
@@ -210,12 +220,12 @@ Opening the store does not need the OTA stop-playback / cancel-downloads path. T
 
 An AAB is not sideloadable (`adb install` wants an APK). Day-to-day device testing stays the preview APK (`npm run build:android:preview`, channel `preview`). To smoke-test the Play AAB on a phone, use Play Console **internal app sharing** (Play-signed splits) or `bundletool` (upload-key signed — uninstall before a later Play install).
 
-Internal sharing of the production AAB is the **same** channel and `runtimeVersion` as store users: `production/android/1.0.0/`. `checkAutomatically` is `NEVER`, so a matching OTA still only applies on cold start or Settings → Check for update.
+Internal sharing of the production AAB is the **same** channel and `runtimeVersion` as store users: `production/android/1.0.3/`. `checkAutomatically` is `NEVER`, so a matching OTA still only applies on cold start or Settings → Check for update.
 
 If that AAB’s **JS** is wrong:
 
-- Do **not** bump `runtimeVersion`. That string stays `1.0.0` until Android **native** changes (icons, splash, native modules). A bump only moves **new** binaries to `production/android/1.0.1/`; phones that already installed `1.0.0` keep asking `1.0.0`.
-- Do **not** `OTA_CHANNEL=production npm run ota:publish` to patch testers. That folder is shared with every production-channel `1.0.0` install, including Play if that AAB is already in Production.
+- Do **not** bump `runtimeVersion`. That string stays `1.0.3` until Android **native** changes (icons, splash, native modules). A bump only moves **new** binaries to a new folder; phones that already installed `1.0.3` keep asking `1.0.3`.
+- Do **not** `OTA_CHANNEL=production npm run ota:publish` to patch testers. That folder is shared with every production-channel `1.0.3` install, including Play if that AAB is already in Production.
 - Fix JS, rebuild the AAB, bump `versionCode`, upload sharing (or Production) again. Testers get the new **embedded** JS.
 
-If you already published a **bad** production OTA: republish good JS to the **same** folder (`production/android/1.0.0/`). That is the rollback. Deleting the R2 manifest only stops new downloads; phones that already applied the bad bundle keep it until a good publish.
+If you already published a **bad** production OTA: republish good JS to the **same** folder (`production/android/1.0.3/`). That is the rollback. Deleting the R2 manifest only stops new downloads; phones that already applied the bad bundle keep it until a good publish.

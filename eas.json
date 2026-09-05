@@ -10,7 +10,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_CATALOGUE_BASE_URL": "https://gurbani-paath-player-catalogue.pages.dev",
+        "EXPO_PUBLIC_CATALOGUE_BASE_URL": "https://cataloguegurbaniaudioplayer.opensikhapps.com",
         "EXPO_PUBLIC_MEDIA_BASE_URL": "https://gurbaniaudioplayerfiles.opensikhapps.com",
         "EXPO_PUBLIC_SENTRY_DSN": "https://8967340067fe0528ea3e236871e4a117@o4512009396224000.ingest.us.sentry.io/4512009405136896",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "687386663876-8l7l063gc009embkou152a452cclebp1.apps.googleusercontent.com",

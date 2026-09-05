@@ -91,6 +91,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       },
       bundleIdentifier: process.env.APP_VARIANT === "development" ? "com.opensikhapps.gurbaniaudioplayer.dev" : config.ios?.bundleIdentifier ?? "com.opensikhapps.gurbaniaudioplayer",
       googleServicesFile: process.env.APP_VARIANT === "development" ? "./GoogleService-Info-dev.plist" : config.ios?.googleServicesFile ?? "./GoogleService-Info.plist",
+      usesIcloudStorage: false,
       associatedDomains: process.env.APP_VARIANT === "development" ? ["applinks:gurbaniaudioplayer-dev.opensikhapps.com"] : config.ios?.associatedDomains ?? [
         "applinks:gurbaniaudioplayer.opensikhapps.com",
       ],

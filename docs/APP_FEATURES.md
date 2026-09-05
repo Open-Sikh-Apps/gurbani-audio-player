@@ -1,15 +1,17 @@
 Waheguru Ji Ka Khalsa
 Waheguru Ji Ki Fateh!
 
+Original product vision (pre-V1). For what shipped, follow `docs/ROADMAP.md` and `docs/manual-test-plan.md`. Home lists sehaj paath by scripture, then reciter-named collections — not a Gursikh portrait grid.
+
 App name:
-Gurbani Paath Player Offline
+Gurbani Audio Player
 
 Main features:
 - Android and iOS support  
 - Multilingual UI (starting with English and Punjabi) with Easy Navigation and controls  
   - Important so that even elders can play easily  
   - People driving should be able to play easily as well, through notification or Android Auto (Carplay)  
-- Homepage: Nice looking with Maharaj’s saroop with a grid/list of multiple Gursikhs (One album for each) (no photo for any gursikh)  
+- Homepage: Nice looking with Maharaj’s saroop with a list of multiple Gursikhs (One album for each)  
   - catalogue updatable from a server static json file, version number stored at a backend 
     - checks catalogue version number at cold start or refresh option from overflow menu in home screen appbar or swipe to refresh   
 - Background playback  

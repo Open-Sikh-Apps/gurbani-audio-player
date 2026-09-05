@@ -11,7 +11,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { SystemBars } from "react-native-edge-to-edge";
 
 import { useEffect, useState } from "react";
-import { AppState } from "react-native";
+import { AppState, Platform } from "react-native";
 
 import { CrashErrorBoundary } from "@/crash/error-boundary";
 import { CrashLastRunNotice } from "@/crash/last-run-notice";
@@ -37,6 +37,7 @@ import {
 } from "@/playback";
 import { usePreferencesStore } from "@/state/preferences-store";
 import { waitAppPersisted } from "@/state/wait-persisted";
+import { clearStaleIosAuth } from "@/native/ios-fresh-install";
 import { applyPendingAppUpdate, probeAppUpdate } from "@/updates/check";
 import { JsSplash, OtaApplyingOverlay } from "@/updates/applying";
 import {
@@ -123,6 +124,10 @@ export default function RootLayout() {
     void (async () => {
       try {
         await waitAppPersisted();
+        // Keychain outlives delete+reinstall; MMKV does not. Wizard-not-done means a fresh sandbox.
+        if (Platform.OS === "ios" && !usePreferencesStore.getState().hasCompletedWizard) {
+          void clearStaleIosAuth();
+        }
         await hydrateCatalogue();
         catalogueReady = true;
         await restoreLastSession();

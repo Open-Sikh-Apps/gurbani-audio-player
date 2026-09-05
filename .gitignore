@@ -52,8 +52,9 @@ GoogleService-Info-dev.plist
 /ios
 /android
 
-# build apk files
+# local EAS artifacts (project root)
 build-*.apk
+build-*.aab
 
 # expo-updates export used by scripts/publish-update.ts
 dist-update/
@@ -62,3 +63,5 @@ dist-update/
 .venv-khajana/
 
 .wrangler
+
+temp

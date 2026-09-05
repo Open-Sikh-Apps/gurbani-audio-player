@@ -15,7 +15,7 @@ Read https://docs.expo.dev/versions/v57.0.0/ before adding APIs. Follow `docs/RO
 - **Player:** `src/playback/` (`PlayerEngine` + one `react-native-nitro-player` adapter). Do not import `react-native-nitro-player` outside it. Do not use its `DownloadManager`, Cast, or equalizer. Details: `.cursor/rules/playback.mdc`.
 - **Media:** R2 + custom-domain CDN (`audio/`, `images/`). Immutable object URLs; new `trackId` if a file changes. Tracks under 512 MB (`byteSize` on recorded catalogue tracks).
 - **Catalogue:** Cloudflare Pages JSON, disk cache; app never calls Sanity (editor + webhook only). Schema and fetch: `.cursor/rules/catalogue.mdc`.
-- **State:** Zustand + MMKV. Local-first. Optional Google Sign-In in **Settings → Cloud sync** only. No wizard auth. No anonymous Firebase on launch. Cloud writes on pause / background / ~1min debounce — not every tick.
+- **State:** Zustand + MMKV. Local-first. Android `allowBackup: false`. iOS excludes MMKV, downloaded audio, and OTA dirs from iCloud backup (`plugins/with-ios-exclude-from-backup.js`) and clears native Google/Firebase Keychain when the wizard has not been completed. Optional Google Sign-In in **Settings → Cloud sync** only. No wizard auth. No anonymous Firebase on launch. Cloud writes on pause / background / ~1min debounce — not every tick.
 - Screens import `playback`, `catalogue`, `downloads`, `sync` modules. They must not import `react-native-nitro-player`, `react-native-notify-kit`, Firebase, or Sanity directly.
 
 Home lists `sehaj_paath` by scripture (`imageUrl` + name), then reciter-named collections.

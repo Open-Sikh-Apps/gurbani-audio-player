@@ -1,4 +1,6 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# If this file exists, EAS uses it *instead of* .gitignore for the build archive
+# (`eas build --local` unpacks that archive in a temp dir). Copy gitignore here,
+# then omit anything the binary must have on disk.
 
 # dependencies
 node_modules/
@@ -18,6 +20,10 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# Play upload keystore — CLI reads these from the project root, not the archive.
+credentials.json
+credentials/
+
 # Metro
 .metro-health-check*
 
@@ -30,23 +36,32 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# Metro-only. Preview/production URLs come from eas.json env, not .env.
 .env
 .env*.local
-
+.env.sentry-build-plugin
 
 # typescript
 *.tsbuildinfo
 
-# generated native folders
+# generated native folders (CNG prebuild)
 /ios
 /android
 
-# build apk files
+# local EAS artifacts
 build-*.apk
+build-*.aab
 
 # expo-updates export used by scripts/publish-update.ts
 dist-update/
 
 # local khajana tagging (mutagen)
 .venv-khajana/
+
+.wrangler
+
+temp
+
+# Do not ignore google-services.json / GoogleService-Info.plist (or the -dev
+# copies). They are gitignored so they stay off GitHub; the archive still needs
+# them for the Firebase / Google Sign-in plugins.
