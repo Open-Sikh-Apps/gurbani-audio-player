@@ -86,39 +86,11 @@ function startTicker(): void {
 }
 
 function fire(): void {
-  if (useSleepTimerStore.getState().kind === "off") {
-    return;
-  }
   clearDurationFire();
   // Engine pause (not TrackPlayer) so the 2s rewind and resume persist still run.
   getPlayerEngine().pause();
   useSleepTimerStore.setState({ ...idle });
   stopTicker();
-}
-
-// Pause only — do not write remainingSec (that re-renders Now Playing on every progress tick).
-function maybeFire(sleep: SleepTimerState, status: PlayerStatus, now: number): void {
-  if (sleep.kind === "duration") {
-    if (sleep.deadlineAt != null && now >= sleep.deadlineAt) {
-      fire();
-    }
-    return;
-  }
-  if (sleep.kind === "tracks") {
-    if (
-      sleep.remainingTrackEnds <= 1 &&
-      remainingContentSec(status, "track") <= 0.35
-    ) {
-      fire();
-    }
-    return;
-  }
-  if (sleep.kind !== "track" && sleep.kind !== "album") {
-    return;
-  }
-  if (remainingContentSec(status, sleep.kind) <= 0.35) {
-    fire();
-  }
 }
 
 function tick(): void {
@@ -132,7 +104,9 @@ function tick(): void {
   if (sleep.kind === "duration") {
     const remaining = Math.max(0, ((sleep.deadlineAt ?? now) - now) / 1000);
     useSleepTimerStore.setState({ remainingSec: remaining });
-    maybeFire(sleep, status, now);
+    if (remaining <= 0) {
+      fire();
+    }
     return;
   }
 
@@ -166,7 +140,9 @@ function tick(): void {
         ? (status.currentTrackId ?? sleep.armedTrackId)
         : sleep.armedTrackId,
   });
-  maybeFire(useSleepTimerStore.getState(), status, now);
+  if (content <= 0.35) {
+    fire();
+  }
 }
 
 function tickTracks(
@@ -210,26 +186,12 @@ export function initSleepTimer(): void {
     return;
   }
   started = true;
-  usePlaybackStore.subscribe((state, prev) => {
-    const sleep = useSleepTimerStore.getState();
-    if (sleep.kind === "off") {
-      return;
-    }
-    if (
-      state.currentTrackId !== prev.currentTrackId ||
-      state.currentIndex !== prev.currentIndex
-    ) {
-      tick();
-      return;
-    }
-    // RN can pause setTimeout in the background while native progress still
-    // reaches JS. Check the deadline here so pause does not wait on foreground.
-    maybeFire(sleep, state, Date.now());
-  });
+  // Every playback emit so remainingSec stays live for track-end vs skip. The 1s
+  // interval is the duration label backup if JS timers stall.
+  usePlaybackStore.subscribe(() => tick());
   AppState.addEventListener("change", (state) => {
     if (state === "active") {
-      // Remaining-time label may have frozen; refresh it. Pause already ran from
-      // progress/timeout if JS was alive.
+      // Interval can stall in the background; catch up when the UI is visible again.
       tick();
     }
   });
@@ -287,8 +249,8 @@ export function armSleepDuration(hours: number, minutes: number): void {
     armedTrackId: null,
     armedIndex: null,
   });
-  // Wall-clock pause when JS timers run. Native progress maybeFire is the
-  // backup if RN pauses timers while audio stays alive. 1s tick is the label.
+  // Interval can stall while the screen is off; the deadline timeout is the
+  // pause. Keep the 1s tick only for the remaining-time label.
   armDurationFire(deadlineAt);
   startTicker();
 }

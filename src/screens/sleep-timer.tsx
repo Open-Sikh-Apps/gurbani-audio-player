@@ -66,14 +66,37 @@ function Stepper({
   );
 }
 
-export function SleepTimerScreen() {
+function SleepRemaining() {
   const { t } = useTranslation();
-  const { hit, text, title, body } = useChrome();
-  const session = usePlaybackStore((state) => state.session);
-  const currentIndex = usePlaybackStore((state) => state.currentIndex);
+  const { text, title, body } = useChrome();
   const kind = useSleepTimerStore((state) => state.kind);
   const remainingSec = useSleepTimerStore((state) => state.remainingSec);
   const remainingTrackEnds = useSleepTimerStore((state) => state.remainingTrackEnds);
+  return (
+    <>
+      <Text className={cn("text-center", ui.muted, body)}>{t("sleep.remaining")}</Text>
+      <Text className={cn("text-center font-semibold", ui.text, title)}>
+        {kind === "tracks"
+          ? t("sleep.tracksRemaining", {
+              count: Math.max(1, remainingTrackEnds),
+            })
+          : formatDuration(remainingSec)}
+      </Text>
+      {kind === "tracks" && remainingTrackEnds === 1 ? (
+        <Text className={cn("text-center", ui.muted, text)}>
+          {formatDuration(remainingSec)}
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
+export function SleepTimerScreen() {
+  const { t } = useTranslation();
+  const { hit, text } = useChrome();
+  const session = usePlaybackStore((state) => state.session);
+  const currentIndex = usePlaybackStore((state) => state.currentIndex);
+  const kind = useSleepTimerStore((state) => state.kind);
   const trackCount = session?.tracks.length ?? 0;
   const tracksLeft = Math.max(1, trackCount - Math.max(0, currentIndex));
   const [hours, setHours] = useState(0);
@@ -97,17 +120,7 @@ export function SleepTimerScreen() {
       >
         {armed ? (
           <View className="gap-3 py-4">
-            <Text className={cn("text-center", ui.muted, body)}>{t("sleep.remaining")}</Text>
-            <Text className={cn("text-center font-semibold", ui.text, title)}>
-              {kind === "tracks"
-                ? t("sleep.tracksRemaining", {
-                  count: Math.max(1, remainingTrackEnds),
-                })
-                : formatDuration(remainingSec)}
-            </Text>
-            {kind === "tracks" && remainingTrackEnds === 1 ? (
-              <Text className={cn("text-center", ui.muted, text)}>{formatDuration(remainingSec)}</Text>
-            ) : null}
+            <SleepRemaining />
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={t("sleep.cancel")}

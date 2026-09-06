@@ -7,6 +7,7 @@ import { CatalogueImage } from "@/components/catalogue-image";
 import { IconButton } from "@/components/icon-button";
 import { NowPlayingAction } from "@/components/now-playing-action";
 import { NowPlayingAlbumButton } from "@/components/now-playing-album-button";
+import { NowPlayingSleepAction } from "@/components/now-playing-sleep-action";
 import { PlaybackScrubber } from "@/components/playback-scrubber";
 import { PlaybackStatusLine } from "@/components/playback-status-line";
 import {
@@ -23,7 +24,6 @@ import {
   PLAYBACK_RATE_MIN,
   PLAYBACK_RATE_STEP,
   clampPlaybackRate,
-  formatDuration,
   getSessionTrack,
   isLocalPlaybackUrl,
   seekBy,
@@ -33,7 +33,6 @@ import {
   skipPrevious,
   togglePlayPause,
   usePlaybackStore,
-  useSleepTimerStore,
 } from "@/playback";
 import { useThemeColors } from "@/theme/use-theme-colors";
 import { Text, View, cn, ui } from "@/tw";
@@ -72,9 +71,6 @@ export function NowPlayingScreen() {
   const albumEnded = usePlaybackStore((state) => state.albumEnded);
   const { navigate } = useDebouncedNavigation();
   const catalogue = useCatalogueStore((state) => state.catalogue);
-  const sleepKind = useSleepTimerStore((state) => state.kind);
-  const remainingSec = useSleepTimerStore((state) => state.remainingSec);
-  const remainingTrackEnds = useSleepTimerStore((state) => state.remainingTrackEnds);
   const online = useIsOnline();
 
   if (!session) {
@@ -253,24 +249,7 @@ export function NowPlayingScreen() {
 
         <View className="flex-row items-start justify-between">
           <NowPlayingAlbumButton />
-          <NowPlayingAction
-            name={sleepKind === "off" ? "bedtime" : "nights-stay"}
-            accessibilityLabel={
-              sleepKind === "off"
-                ? t("sleep.title")
-                : `${t("sleep.title")}. ${t("sleep.remaining")}`
-            }
-            label={
-              sleepKind === "off"
-                ? t("sleep.title")
-                : sleepKind === "tracks"
-                  ? t("sleep.tracksRemaining", { count: remainingTrackEnds })
-                  : formatDuration(remainingSec)
-            }
-            selected={sleepKind !== "off"}
-            filled={sleepKind !== "off"}
-            onPress={() => navigate("/now-playing/sleep-timer")}
-          />
+          <NowPlayingSleepAction />
           <NowPlayingAction
             name="bookmark-border"
             accessibilityLabel={t("bookmark.add")}
