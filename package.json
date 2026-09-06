@@ -86,7 +86,6 @@
     "ota:publish": "tsx scripts/publish-update.ts",
     "ota:fingerprint-check": "tsx scripts/publish-update.ts --fingerprint-check",
     "test:updates": "tsx --test src/updates/launch-hash.test.ts",
-    "test:playback": "tsx --test src/playback/progress-scheduler.test.ts",
     "build:android:preview": "unset APP_VARIANT && eas build --profile preview --platform android --local",
     "build:android:production": "unset APP_VARIANT && eas build --profile production --platform android --local",
     "patch:nitro-player": "rm -rf node_modules/react-native-nitro-player/android/.cxx node_modules/react-native-nitro-player/android/build && patch-package react-native-nitro-player --exclude 'android/\\.cxx|android/build'",

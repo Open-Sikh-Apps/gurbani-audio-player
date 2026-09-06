@@ -29,7 +29,7 @@ export function PlaybackScrubber({
   const draggingRef = useRef(false);
   const pendingSeekSec = useRef<number | null>(null);
   const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Preview while dragging so coalesced native progress ticks do not yank the thumb.
+  // Preview while dragging so live progress ticks do not yank the thumb.
   const [previewSec, setPreviewSec] = useState<number | null>(null);
 
   const duration = Math.max(0, durationSec);
