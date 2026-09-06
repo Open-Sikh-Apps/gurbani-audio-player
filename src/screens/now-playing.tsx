@@ -45,6 +45,19 @@ function formatRate(rate: number): string {
   return `${parseFloat(rate.toFixed(2))}×`;
 }
 
+// Own the position subscription so transport/art do not re-render on every progress tick.
+function LivePlaybackScrubber() {
+  const positionSec = usePlaybackStore((state) => state.positionSec);
+  const durationSec = usePlaybackStore((state) => state.durationSec);
+  return (
+    <PlaybackScrubber
+      positionSec={positionSec}
+      durationSec={durationSec}
+      onSeek={seekTo}
+    />
+  );
+}
+
 export function NowPlayingScreen() {
   const { t } = useTranslation();
   const locale = useResolvedLocale();
@@ -55,8 +68,6 @@ export function NowPlayingScreen() {
   const playing = usePlaybackStore((state) => state.playing);
   const currentTrackId = usePlaybackStore((state) => state.currentTrackId);
   const currentIndex = usePlaybackStore((state) => state.currentIndex);
-  const positionSec = usePlaybackStore((state) => state.positionSec);
-  const durationSec = usePlaybackStore((state) => state.durationSec);
   const rate = usePlaybackStore((state) => state.rate);
   const albumEnded = usePlaybackStore((state) => state.albumEnded);
   const { navigate } = useDebouncedNavigation();
@@ -169,11 +180,7 @@ export function NowPlayingScreen() {
       </View>
 
       <View className={cn("shrink-0", simpleMode ? "gap-3" : "gap-4")}>
-        <PlaybackScrubber
-          positionSec={positionSec}
-          durationSec={durationSec}
-          onSeek={seekTo}
-        />
+        <LivePlaybackScrubber />
 
         <View className="flex-row items-center justify-between">
           <IconButton
@@ -273,8 +280,9 @@ export function NowPlayingScreen() {
                 return;
               }
               // Stamp the position at tap; the note screen must not follow the live tick.
+              const stamped = usePlaybackStore.getState().positionSec;
               navigate(
-                `/now-playing/bookmark-note?albumId=${encodeURIComponent(session.albumId)}&trackId=${encodeURIComponent(currentTrackId)}&positionSec=${positionSec}`,
+                `/now-playing/bookmark-note?albumId=${encodeURIComponent(session.albumId)}&trackId=${encodeURIComponent(currentTrackId)}&positionSec=${stamped}`,
               );
             }}
           />

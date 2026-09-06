@@ -21,6 +21,10 @@ import {
   trackInSession,
 } from "@/playback/native-status";
 import {
+  createLatestWinsScheduler,
+  progressFlushDelayMs,
+} from "@/playback/progress-scheduler";
+import {
   getAlbumRate,
   persistAlbumRate,
   getAlbumResume,
@@ -85,6 +89,10 @@ export function createNitroPlayerEngine(): PlayerEngine {
   let albumEnded = false;
   const mutex = new Mutex();
   let networkHooked = false;
+  // Native progress is ~250ms. Coalesce so a hours-long background queue is one emit.
+  const progressEmit = createLatestWinsScheduler(() =>
+    progressFlushDelayMs(AppState.currentState),
+  );
 
   function nativePlayerConfig() {
     return {
@@ -132,6 +140,7 @@ export function createNitroPlayerEngine(): PlayerEngine {
     return Boolean(track && !isLocalUrl(track.url) && !isOnline());
   }
 
+  // Progress uses progressEmit (latest-wins) before this; seek/state/track still call emit directly.
   function emit(next?: PlayerStatus): void {
     const status = next ?? currentStatus();
     usePlaybackStore.setState(status);
@@ -161,6 +170,8 @@ export function createNitroPlayerEngine(): PlayerEngine {
         });
       }
       if (state === "active") {
+        // Drop a queued flood; emit only the latest native position.
+        progressEmit.flush();
         fire(async () => {
           // Stopped at album end is intentional. Rebuilding would seek 0 and drop the replay icon.
           if (albumEnded) {
@@ -353,12 +364,10 @@ export function createNitroPlayerEngine(): PlayerEngine {
         ) {
           return;
         }
-        cachedNative = {
-          ...cachedNative,
-          currentPosition: position,
-          totalDuration,
-        };
-        emit();
+        // Mutate in place so a resume flood does not allocate a PlayerState per tick.
+        cachedNative.currentPosition = position;
+        cachedNative.totalDuration = totalDuration;
+        progressEmit.schedule(() => emit());
       },
       onSeek: (position, totalDuration) => {
         if (!cachedNative) {

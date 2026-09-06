@@ -82,6 +82,118 @@ function AlbumHeaderProgress({ albumId }: { albumId: string }) {
   );
 }
 
+// Live position lives here so FlashList does not re-render on every progress tick.
+function AlbumResumeButton({
+  albumId,
+  tracks,
+  online,
+  locale,
+  onPlayFrom,
+}: {
+  albumId: string;
+  tracks: AlbumRow[];
+  online: boolean;
+  locale: string;
+  onPlayFrom: (track: AlbumRow, fromPositionSec?: number) => void;
+}) {
+  const { t } = useTranslation();
+  const { text, hit } = useChrome();
+  const { navigate } = useDebouncedNavigation();
+  const catalogue = useCatalogueStore((state) => state.catalogue);
+  const isCurrentAlbum = usePlaybackStore(
+    (state) => state.session?.albumId === albumId,
+  );
+  const currentTrackId = usePlaybackStore((state) => state.currentTrackId);
+  const playing = usePlaybackStore((state) => state.playing);
+  const positionSec = usePlaybackStore((state) => state.positionSec);
+  const liveDurationSec = usePlaybackStore((state) => state.durationSec);
+  const albumEnded = usePlaybackStore((state) => state.albumEnded);
+  const storedResume = useResumeStore((state) => state.positions[albumId]);
+  const resume =
+    isCurrentAlbum && currentTrackId
+      ? {
+          trackId: currentTrackId,
+          positionSec,
+          durationSec: liveDurationSec > 0 ? liveDurationSec : undefined,
+        }
+      : storedResume;
+  const resumeTrack = resume
+    ? (tracks.find((track) => track.id === resume.trackId) ??
+      (getTrackInCollection(catalogue, albumId, resume.trackId) as
+        | AlbumRow
+        | undefined))
+    : undefined;
+  const resumeAt =
+    resume && resumeTrack
+      ? midTrackResumeSec(
+          resume.positionSec,
+          resume.durationSec ??
+            ("durationSec" in resumeTrack ? resumeTrack.durationSec : undefined),
+        )
+      : null;
+  const albumPlaying = isCurrentAlbum && playing;
+  const albumEndedResume =
+    resume != null &&
+    isEndedAlbumResume(
+      resume,
+      tracks[tracks.length - 1]?.id,
+      resume.durationSec ??
+        (resumeTrack && "durationSec" in resumeTrack
+          ? resumeTrack.durationSec
+          : undefined),
+      isCurrentAlbum && albumEnded,
+    );
+  if (!resumeTrack) {
+    return null;
+  }
+  const resumeLabel = albumPlaying
+    ? t("album.playing")
+    : albumEndedResume
+      ? t("album.ended")
+      : t("album.resume");
+  const resumeA11y = albumPlaying
+    ? t("album.playing")
+    : albumEndedResume
+      ? t("album.endedA11y")
+      : t("album.resume");
+  const resumeOnDisk = isTrackDownloaded(
+    resumeTrack.id,
+    remoteUrlOf(resumeTrack),
+  );
+  const resumeDisabled = !albumPlaying && !online && !resumeOnDisk;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={resumeA11y}
+      accessibilityState={{ disabled: resumeDisabled }}
+      className={cn(
+        "rounded-2xl border px-4 py-3",
+        ui.borderAccent,
+        ui.surface,
+        hit,
+        resumeDisabled && "opacity-50",
+      )}
+      disabled={resumeDisabled}
+      unstable_pressDelay={LIST_PLAY_PRESS_DELAY_MS}
+      onPress={() => {
+        // Playing: open the player. Paused: playFrom also navigates after load.
+        if (albumPlaying) {
+          navigate("/now-playing");
+          return;
+        }
+        onPlayFrom(resumeTrack, resumeAt ?? 0);
+      }}
+    >
+      <Text className={cn(ui.accent, text)}>{resumeLabel}</Text>
+      <Text className={cn("mt-1", ui.muted, text)}>
+        {resolveL10n(resumeTrack.title, locale)}
+        {resumeAt != null ? ` · ${formatDuration(resumeAt)}` : null}
+      </Text>
+    </Pressable>
+  );
+}
+
 function AlbumTrackRow({
   item,
   albumId,
@@ -237,7 +349,7 @@ function AlbumTrackRow({
 
 export function AlbumScreen() {
   const { t } = useTranslation();
-  const { body, text, hit, title } = useChrome();
+  const { body, text, title } = useChrome();
   const locale = useResolvedLocale();
   const { navigate } = useDebouncedNavigation();
   const { albumId, trackId } = useLocalSearchParams<{
@@ -262,10 +374,6 @@ export function AlbumScreen() {
   const currentTrackId = usePlaybackStore((state) => state.currentTrackId);
   const playing = usePlaybackStore((state) => state.playing);
   const buffering = usePlaybackStore((state) => state.buffering);
-  const positionSec = usePlaybackStore((state) => state.positionSec);
-  const liveDurationSec = usePlaybackStore((state) => state.durationSec);
-  const albumEnded = usePlaybackStore((state) => state.albumEnded);
-  const storedResume = useResumeStore((state) => state.positions[albumId]);
   const inLibrary = useLibraryStore((state) => state.albums[albumId] != null);
   const toggleAlbum = useLibraryStore((state) => state.toggleAlbum);
   const online = useIsOnline();
@@ -313,15 +421,6 @@ export function AlbumScreen() {
     });
     return () => cancelAnimationFrame(frame);
   }, [deepTrackId, tracks]);
-  // Live position wins so Resume matches the player, not a stale MMKV row.
-  const resume =
-    isCurrentAlbum && currentTrackId
-      ? {
-        trackId: currentTrackId,
-        positionSec,
-        durationSec: liveDurationSec > 0 ? liveDurationSec : undefined,
-      }
-      : storedResume;
   const downloadable = sehaj?.downloadable === true;
 
   const reciterName = reciter
@@ -427,46 +526,6 @@ export function AlbumScreen() {
     );
   }
 
-  const resumeTrack = resume
-    ? (tracks.find((track) => track.id === resume.trackId) ??
-      (getTrackInCollection(catalogue, albumId, resume.trackId) as
-        | AlbumRow
-        | undefined))
-    : undefined;
-  const resumeAt =
-    resume && resumeTrack
-      ? midTrackResumeSec(
-        resume.positionSec,
-        resume.durationSec ??
-        ("durationSec" in resumeTrack ? resumeTrack.durationSec : undefined),
-      )
-      : null;
-  const albumPlaying = isCurrentAlbum && playing;
-  const albumEndedResume =
-    resume != null &&
-    isEndedAlbumResume(
-      resume,
-      tracks[tracks.length - 1]?.id,
-      resume.durationSec ??
-      (resumeTrack && "durationSec" in resumeTrack
-        ? resumeTrack.durationSec
-        : undefined),
-      isCurrentAlbum && albumEnded,
-    );
-  const resumeLabel = albumPlaying
-    ? t("album.playing")
-    : albumEndedResume
-      ? t("album.ended")
-      : t("album.resume");
-  const resumeA11y = albumPlaying
-    ? t("album.playing")
-    : albumEndedResume
-      ? t("album.endedA11y")
-      : t("album.resume");
-  const resumeOnDisk =
-    resumeTrack != null &&
-    isTrackDownloaded(resumeTrack.id, remoteUrlOf(resumeTrack));
-  const resumeDisabled = !albumPlaying && !online && !resumeOnDisk;
   // Offline still opens the sheet so Remove all is reachable when files exist.
   const downloadActionDisabled = !online && !hasAnyDownload;
 
@@ -564,40 +623,15 @@ export function AlbumScreen() {
                   </View>
                   <AlbumHeaderProgress albumId={albumId} />
                 </View>
-                {resumeTrack ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={resumeA11y}
-                    accessibilityState={{ disabled: resumeDisabled }}
-                    className={cn(
-                      "rounded-2xl border px-4 py-3",
-                      ui.borderAccent,
-                      ui.surface,
-                      hit,
-                      resumeDisabled && "opacity-50",
-                    )}
-                    disabled={resumeDisabled}
-                    unstable_pressDelay={LIST_PLAY_PRESS_DELAY_MS}
-                    onPress={() => {
-                      // Playing: open the player. Paused: playFrom also navigates after load.
-                      if (albumPlaying) {
-                        navigate("/now-playing");
-                        return;
-                      }
-                      void playFrom(resumeTrack, resumeAt ?? 0);
-                    }}
-                  >
-                    <Text className={cn(ui.accent, text)}>
-                      {resumeLabel}
-                    </Text>
-                    <Text className={cn("mt-1", ui.muted, text)}>
-                      {resolveL10n(resumeTrack.title, locale)}
-                      {resumeAt != null
-                        ? ` · ${formatDuration(resumeAt)}`
-                        : null}
-                    </Text>
-                  </Pressable>
-                ) : null}
+                <AlbumResumeButton
+                  albumId={albumId}
+                  tracks={tracks}
+                  online={online}
+                  locale={locale}
+                  onPlayFrom={(track, fromPositionSec) => {
+                    void playFrom(track, fromPositionSec);
+                  }}
+                />
                 {selecting ? (
                   <AlbumActionRow
                     items={[

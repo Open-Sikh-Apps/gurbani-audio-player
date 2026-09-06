@@ -73,17 +73,17 @@ export function IconButton({
           <AppIcon name={name} size={size} color={color} />
         </Pressable>
       </RNView>
-      {/* RN Modal is a separate window; without these, Android drops edge-to-edge on open. */}
-      <Modal
-        visible={anchor != null}
-        transparent
-        animationType="fade"
-        statusBarTranslucent
-        navigationBarTranslucent
-        onRequestClose={() => setAnchor(null)}
-      >
-        <Pressable className="flex-1" onPress={() => setAnchor(null)}>
-          {anchor ? (
+      {/* Mount only while open — a hidden RN Modal still eats Android back. */}
+      {anchor ? (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          navigationBarTranslucent
+          onRequestClose={() => setAnchor(null)}
+        >
+          <Pressable className="flex-1" onPress={() => setAnchor(null)}>
             <View
               pointerEvents="none"
               className={cn("absolute rounded-lg border px-3 py-2", ui.border, ui.surface)}
@@ -95,9 +95,9 @@ export function IconButton({
             >
               <Text className={cn("text-center", ui.text)}>{accessibilityLabel}</Text>
             </View>
-          ) : null}
-        </Pressable>
-      </Modal>
+          </Pressable>
+        </Modal>
+      ) : null}
     </>
   );
 }

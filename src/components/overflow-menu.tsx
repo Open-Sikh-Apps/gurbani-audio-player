@@ -96,81 +96,84 @@ export function OverflowMenu({ extraItems = [] }: OverflowMenuProps) {
         className={hit}
         onPress={() => setOpen(true)}
       />
-      {/* RN Modal is a separate window; without these, Android drops edge-to-edge on open. */}
-      <Modal
-        visible={open}
-        transparent
-        animationType="fade"
-        statusBarTranslucent
-        navigationBarTranslucent
-        onRequestClose={close}
-      >
-        <Pressable className="flex-1" onPress={close}>
-          {/* Absolute + min-w + flex-1 labels collapse to 224px and clip longer Punjabi/simple-mode copy. */}
-          <View
-            className={cn(
-              "absolute top-16 right-3 min-w-56 overflow-hidden rounded-2xl border",
-              ui.border,
-              ui.surface,
-            )}
-            style={{ maxWidth: windowWidth - 80 }}
-          >
-            {extraItems.map((item, index) => (
+      {/* Mount only while open — a hidden RN Modal still eats Android back.
+          RN Modal is a separate window; without these, Android drops edge-to-edge on open. */}
+      {open ? (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          navigationBarTranslucent
+          onRequestClose={close}
+        >
+          <Pressable className="flex-1" onPress={close}>
+            {/* Absolute + min-w + flex-1 labels collapse to 224px and clip longer Punjabi/simple-mode copy. */}
+            <View
+              className={cn(
+                "absolute top-16 right-3 min-w-56 overflow-hidden rounded-2xl border",
+                ui.border,
+                ui.surface,
+              )}
+              style={{ maxWidth: windowWidth - 80 }}
+            >
+              {extraItems.map((item, index) => (
+                <OverflowMenuRow
+                  key={item.key}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: item.disabled }}
+                  border={index > 0}
+                  disabled={item.disabled}
+                  hit={hit}
+                  icon={item.icon}
+                  iconColor={colors.accent}
+                  iconSize={tabIcon}
+                  label={item.label}
+                  text={text}
+                  onPress={() => {
+                    if (item.disabled) {
+                      return;
+                    }
+                    // Close first so the modal does not eat the next Alert/sheet.
+                    close();
+                    item.onPress();
+                  }}
+                />
+              ))}
               <OverflowMenuRow
-                key={item.key}
-                accessibilityRole="button"
-                accessibilityState={{ disabled: item.disabled }}
-                border={index > 0}
-                disabled={item.disabled}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: simpleMode }}
+                border={extraItems.length > 0}
                 hit={hit}
-                icon={item.icon}
+                icon="text-fields"
                 iconColor={colors.accent}
                 iconSize={tabIcon}
-                label={item.label}
+                label={simpleMode ? t("home.simpleModeOff") : t("home.simpleModeOn")}
                 text={text}
                 onPress={() => {
-                  if (item.disabled) {
-                    return;
-                  }
-                  // Close first so the modal does not eat the next Alert/sheet.
+                  setSimpleMode(!simpleMode);
                   close();
-                  item.onPress();
                 }}
               />
-            ))}
-            <OverflowMenuRow
-              accessibilityRole="switch"
-              accessibilityState={{ checked: simpleMode }}
-              border={extraItems.length > 0}
-              hit={hit}
-              icon="text-fields"
-              iconColor={colors.accent}
-              iconSize={tabIcon}
-              label={simpleMode ? t("home.simpleModeOff") : t("home.simpleModeOn")}
-              text={text}
-              onPress={() => {
-                setSimpleMode(!simpleMode);
-                close();
-              }}
-            />
-            <OverflowMenuRow
-              accessibilityRole="switch"
-              accessibilityState={{ checked: keepScreenOn }}
-              border
-              hit={hit}
-              icon={keepScreenOn ? "brightness-high" : "brightness-medium"}
-              iconColor={colors.accent}
-              iconSize={tabIcon}
-              label={keepScreenOn ? t("home.keepScreenOff") : t("home.keepScreenOn")}
-              text={text}
-              onPress={() => {
-                setKeepScreenOn(!keepScreenOn);
-                close();
-              }}
-            />
-          </View>
-        </Pressable>
-      </Modal>
+              <OverflowMenuRow
+                accessibilityRole="switch"
+                accessibilityState={{ checked: keepScreenOn }}
+                border
+                hit={hit}
+                icon={keepScreenOn ? "brightness-high" : "brightness-medium"}
+                iconColor={colors.accent}
+                iconSize={tabIcon}
+                label={keepScreenOn ? t("home.keepScreenOff") : t("home.keepScreenOn")}
+                text={text}
+                onPress={() => {
+                  setKeepScreenOn(!keepScreenOn);
+                  close();
+                }}
+              />
+            </View>
+          </Pressable>
+        </Modal>
+      ) : null}
     </>
   );
 }

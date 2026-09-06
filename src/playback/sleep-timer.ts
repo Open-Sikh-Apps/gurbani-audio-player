@@ -186,8 +186,15 @@ export function initSleepTimer(): void {
     return;
   }
   started = true;
-  // Track changes must fire immediately; the 1s interval only drives the remaining-time label.
-  usePlaybackStore.subscribe(() => tick());
+  // Identity only — progress ticks would re-render Now Playing via remainingSec.
+  usePlaybackStore.subscribe((state, prev) => {
+    if (
+      state.currentTrackId !== prev.currentTrackId ||
+      state.currentIndex !== prev.currentIndex
+    ) {
+      tick();
+    }
+  });
   AppState.addEventListener("change", (state) => {
     if (state === "active") {
       // Interval can stall in the background; catch up when the UI is visible again.
