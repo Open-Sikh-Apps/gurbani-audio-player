@@ -225,7 +225,7 @@
   },
   "feedback": {
     "mailSubject": "ਗੁਰਬਾਣੀ ਆਡੀਓ ਪਲੇਅਰ ਸੁਝਾਅ",
-    "mailBody": "ਐਪ ਵਰਜਨ: {{version}}\nਅੱਪਡੇਟ: {{updateId}}\n\n",
+    "mailBody": "ਐਪ ਵਰਜਨ: {{version}}\nਬਿਲਡ: {{build}}\nਰਨਟਾਈਮ: {{runtimeVersion}}\nਓਐਸ: {{os}}\nਚੈਨਲ: {{channel}}\nਅੱਪਡੇਟ: {{updateId}}\n\n",
     "copied": "ਮੇਲ ਐਪ ਨਹੀਂ ਮਿਲੀ। ਪਤਾ ਅਤੇ ਵਰਜਨ ਕਾਪੀ ਹੋ ਗਏ ਹਨ।"
   }
 }

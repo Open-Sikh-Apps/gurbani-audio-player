@@ -427,9 +427,6 @@ export function createNitroPlayerEngine(): PlayerEngine {
 
   async function seekByOverflowing(deltaSec: number): Promise<void> {
     // Leftover ±10 at a track edge lands on the neighbour; first/last tracks clamp.
-    if (albumEnded && deltaSec > 0) {
-      return;
-    }
     const state = await TrackPlayer.getState();
     const live = session;
     const index = state.currentIndex;
@@ -640,8 +637,10 @@ export function createNitroPlayerEngine(): PlayerEngine {
     if (!session) {
       return;
     }
-    // Next on the last track (or prev on the first) must not skip — native skipToNext can restart.
+    // Next on the last track (or prev on the first) must not rebuild the playing item.
     if (index === currentStatus().currentIndex) {
+      await applyUpcomingSourceUpdates();
+      await nativeSkip();
       return;
     }
     const resolved = withLocalUrls(session);

@@ -46,7 +46,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.opensikhapps.gurbaniaudioplayer",
-      "versionCode": 3,
+      "versionCode": 4,
       "googleServicesFile": "./google-services.json",
       "allowBackup": false,
       "permissions": [

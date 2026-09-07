@@ -1,19 +1,53 @@
 import Constants from "expo-constants";
 import * as Clipboard from "expo-clipboard";
 import * as Updates from "expo-updates";
-import { Alert, Linking } from "react-native";
+import { Alert, Linking, Platform } from "react-native";
 
 import i18n from "@/i18n";
 
 const FEEDBACK_EMAIL = "contact@opensikhapps.com";
 
+function orUnknown(value: string | number | null | undefined): string {
+  if (value == null) {
+    return "unknown";
+  }
+  const text = String(value).trim();
+  return text.length > 0 ? text : "unknown";
+}
+
+function nativeBuild(): string {
+  if (Platform.OS === "android") {
+    return orUnknown(Constants.expoConfig?.android?.versionCode);
+  }
+  if (Platform.OS === "ios") {
+    return orUnknown(Constants.expoConfig?.ios?.buildNumber);
+  }
+  return "unknown";
+}
+
+function otaChannel(): string {
+  // Updates.channel is EAS Update only; this app bakes expo-channel-name on the binary.
+  const headers = Constants.expoConfig?.updates?.requestHeaders as
+    | Record<string, string>
+    | undefined;
+  return orUnknown(Updates.channel ?? headers?.["expo-channel-name"]);
+}
+
 function versionBody(): string {
-  // Downloaded OTAs only expose expoConfig via the Worker manifest extra.expoClient.
-  const version =
-    Constants.expoConfig?.version ?? Updates.runtimeVersion ?? "unknown";
-  // OTA id so Play Store mail can tell a Worker bundle from the store binary.
+  const version = orUnknown(Constants.expoConfig?.version);
+  const build = nativeBuild();
+  const runtimeVersion = orUnknown(Updates.runtimeVersion);
+  const os = `${Platform.OS} ${String(Platform.Version)}`;
+  const channel = otaChannel();
   const updateId = Updates.updateId ?? "embedded";
-  return i18n.t("feedback.mailBody", { version, updateId });
+  return i18n.t("feedback.mailBody", {
+    version,
+    build,
+    runtimeVersion,
+    os,
+    channel,
+    updateId,
+  });
 }
 
 export async function openFeedbackMail(): Promise<void> {

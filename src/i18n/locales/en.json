@@ -225,7 +225,7 @@
   },
   "feedback": {
     "mailSubject": "Gurbani audio player feedback",
-    "mailBody": "App version: {{version}}\nUpdate: {{updateId}}\n\n",
+    "mailBody": "App version: {{version}}\nBuild: {{build}}\nRuntime: {{runtimeVersion}}\nOS: {{os}}\nChannel: {{channel}}\nUpdate: {{updateId}}\n\n",
     "copied": "No mail app. Address and version copied."
   }
 }
