@@ -26,10 +26,8 @@
     },
     "ios": {
       "supportsTablet": true,
+      "requireFullScreen": true,
       "bundleIdentifier": "com.opensikhapps.gurbaniaudioplayer",
-      "associatedDomains": [
-        "applinks:gurbaniaudioplayer.opensikhapps.com"
-      ],
       "usesIcloudStorage": false,
       "infoPlist": {
         "CFBundleAllowMixedLocalizations": true,
@@ -84,7 +82,17 @@
       "expo-sharing",
       "expo-web-browser",
       "expo-image",
-      "expo-font",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/NotoSansGurmukhi-Regular.ttf",
+            "./assets/fonts/NotoSansGurmukhi-Medium.ttf",
+            "./assets/fonts/NotoSansGurmukhi-SemiBold.ttf",
+            "./assets/fonts/NotoSansGurmukhi-Bold.ttf"
+          ]
+        }
+      ],
       "expo-localization",
       "expo-asset",
       "@react-native-vector-icons/material-icons",

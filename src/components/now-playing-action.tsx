@@ -29,7 +29,11 @@ export function NowPlayingAction({
   // space-separated token so the column grows to the longest word instead.
   const stacked = label.trim().split(/\s+/).join("\n");
   return (
-    <Pressable className={cn("items-center", simpleMode ? "min-w-16" : "min-w-14")} onPress={onPress}>
+    <Pressable
+      className={cn("items-center", simpleMode ? "min-w-16" : "min-w-14")}
+      disabled={disabled}
+      onPress={onPress}
+    >
       <IconButton
         name={name}
         accessibilityLabel={accessibilityLabel}
@@ -42,7 +46,12 @@ export function NowPlayingAction({
         onPress={onPress}
       />
       <Text
-        className={cn(ui.accent, nowPlayingActionText, "text-center")}
+        className={cn(
+          disabled ? ui.muted : ui.accent,
+          nowPlayingActionText,
+          "text-center",
+          disabled && "opacity-40",
+        )}
         textBreakStrategy="simple"
       >
         {stacked}

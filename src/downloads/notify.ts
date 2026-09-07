@@ -16,7 +16,8 @@ const PENDING_ALBUM_KEY = "albumId";
 let channelReady: Promise<void> | null = null;
 let opensStarted = false;
 const pendingAlbumMmkv = createMMKV({ id: PENDING_ALBUM_MMKV_ID });
-const completeTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+// Finished-album notices must survive reconcile — dismissStale only keeps in-flight ids.
+const completeNoticeIds = new Set<string>();
 
 export async function requestDownloadNotificationPermission(): Promise<void> {
   await notifee.requestPermission();
@@ -153,6 +154,7 @@ export async function showProgressNotification(options: {
   albumId: string;
 }): Promise<void> {
   await ensureChannel();
+  completeNoticeIds.delete(options.id);
   const percent = Math.max(0, Math.min(100, Math.round(options.percent)));
   await notifee.displayNotification({
     id: options.id,
@@ -188,9 +190,12 @@ export async function showCompleteNotification(options: {
   albumId: string;
 }): Promise<void> {
   await ensureChannel();
+  completeNoticeIds.add(options.id);
   // Same id as the ongoing progress notice. Android keeps the progress bar
   // unless we drop that notification before posting the complete one.
-  await notifee.cancelNotification(options.id);
+  if (Platform.OS === "android") {
+    await notifee.cancelNotification(options.id);
+  }
   await notifee.displayNotification({
     id: options.id,
     title: options.title,
@@ -204,27 +209,19 @@ export async function showCompleteNotification(options: {
       pressAction: { id: "default", launchActivity: "default" },
       smallIcon: "notification_icon",
     },
+    ios: {
+      interruptionLevel: "active",
+      foregroundPresentationOptions: {
+        banner: false,
+        list: true,
+        sound: false,
+      },
+    },
   });
-  const prev = completeTimeouts.get(options.id);
-  if (prev) {
-    clearTimeout(prev);
-  }
-  // Auto-dismiss so the shade does not fill with finished albums.
-  completeTimeouts.set(
-    options.id,
-    setTimeout(() => {
-      completeTimeouts.delete(options.id);
-      void notifee.cancelNotification(options.id);
-    }, 4000),
-  );
 }
 
 export async function cancelDownloadNotification(id: string): Promise<void> {
-  const prev = completeTimeouts.get(id);
-  if (prev) {
-    clearTimeout(prev);
-    completeTimeouts.delete(id);
-  }
+  completeNoticeIds.delete(id);
   await notifee.cancelNotification(id);
 }
 
@@ -252,7 +249,7 @@ export async function dismissStaleDownloadNotifications(
 ): Promise<void> {
   const displayed = await displayedDownloadNotificationIds();
   for (const id of displayed) {
-    if (keepIds.has(id)) {
+    if (keepIds.has(id) || completeNoticeIds.has(id)) {
       continue;
     }
     await notifee.cancelNotification(id);

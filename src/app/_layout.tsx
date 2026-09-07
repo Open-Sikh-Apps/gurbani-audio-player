@@ -1,11 +1,7 @@
 import "@/global.css";
 import "@/i18n";
 
-import {
-  NotoSansGurmukhi_400Regular,
-  NotoSansGurmukhi_700Bold,
-  useFonts,
-} from "@expo-google-fonts/noto-sans-gurmukhi";
+import { useFonts } from "expo-font";
 import { Stack, ThemeProvider } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { SystemBars } from "react-native-edge-to-edge";
@@ -75,8 +71,12 @@ async function hideNativeSplash(): Promise<void> {
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
-    NotoSansGurmukhi: NotoSansGurmukhi_400Regular,
-    "NotoSansGurmukhi-Bold": NotoSansGurmukhi_700Bold,
+    // Android still looks up this alias; iOS looks up the PostScript filename.
+    NotoSansGurmukhi: require("../../assets/fonts/NotoSansGurmukhi-Regular.ttf"),
+    "NotoSansGurmukhi-Regular": require("../../assets/fonts/NotoSansGurmukhi-Regular.ttf"),
+    "NotoSansGurmukhi-Medium": require("../../assets/fonts/NotoSansGurmukhi-Medium.ttf"),
+    "NotoSansGurmukhi-SemiBold": require("../../assets/fonts/NotoSansGurmukhi-SemiBold.ttf"),
+    "NotoSansGurmukhi-Bold": require("../../assets/fonts/NotoSansGurmukhi-Bold.ttf"),
   });
   const hasCompletedWizard = usePreferencesStore(
     (state) => state.hasCompletedWizard,

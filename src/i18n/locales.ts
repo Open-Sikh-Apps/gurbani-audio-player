@@ -1,4 +1,6 @@
 import { getLocales } from "expo-localization";
+import { Platform } from "react-native";
+
 import { UI_LOCALES, FALLBACK_LOCALE, SYSTEM_LOCALE, type UiLocale } from "@/i18n/locales-constants";
 export { UI_LOCALES, FALLBACK_LOCALE, SYSTEM_LOCALE, SUPPORTED_LOCALE_CODES, type UiLocale } from "@/i18n/locales-constants";
 
@@ -61,7 +63,13 @@ export function resolveLocalePreference(preference: string): string {
 }
 
 export function fontFamilyForLocale(code: string): string | undefined {
-  return getUiLocale(code)?.fontFamily;
+  const family = getUiLocale(code)?.fontFamily;
+  // iOS UIFont looks up PostScript names; `NotoSansGurmukhi` is only an Android alias
+  // and falls back to Apple's blocky system Gurmukhi.
+  if (Platform.OS === "ios" && family === "NotoSansGurmukhi") {
+    return "NotoSansGurmukhi-Regular";
+  }
+  return family;
 }
 
 export function fontFamilyBoldForLocale(code: string): string | undefined {

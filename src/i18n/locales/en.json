@@ -29,7 +29,7 @@
     "keepScreenOn": "Keep screen on while playing",
     "keepScreenOnHint": "Prevents the screen from sleeping during playback",
     "unrestrictedBattery": "Unrestricted battery",
-    "unrestrictedBatteryHint": "On some phones, battery saving stops audio after a few minutes. Open system settings and set Battery to Unrestricted.",
+    "unrestrictedBatteryHint": "On some phones, battery saving stops audio or downloads after a few minutes. Open system settings and set Battery to Unrestricted.",
     "wifiOnly": "Download on Wi-Fi only",
     "wifiOnlyHint": "Protects mobile data. Turn off to allow downloads on cellular.",
     "remotePrimary": "Lock screen and headset buttons",
@@ -226,6 +226,6 @@
   "feedback": {
     "mailSubject": "Gurbani audio player feedback",
     "mailBody": "App version: {{version}}\nBuild: {{build}}\nRuntime: {{runtimeVersion}}\nOS: {{os}}\nChannel: {{channel}}\nUpdate: {{updateId}}\n\n",
-    "copied": "No mail app. Address and version copied."
+    "copied": "Couldn't open a mail app. {{email}} and this app's version are on the clipboard."
   }
 }

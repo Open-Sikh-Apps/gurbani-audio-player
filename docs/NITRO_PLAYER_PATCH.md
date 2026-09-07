@@ -34,7 +34,7 @@ Native has no NetInfo. JS packs `httpOverflow:1|0` in the same config token (`al
 Settings chooses which pair is **primary** (default **±10**). Compact notification, lock screen, Bluetooth, and car follow that pair. The other pair is **secondary**: in-app always, and on Android the **expanded notification overflow**.
 
 - **Android** can split compact vs overflow. When primary is ±10, overflow prev/next are custom session actions so a headset can still seek without also remapping expanded skip. Media3 hides “next” on the last item — the patch keeps +10 available there when primary is seek.
-- **iOS** cannot split Control Center from Bluetooth: remapping next/prev for a headset also remaps Control Center. Track skip stays in-app when primary is ±10. When primary is seek, the numbered ±10 buttons are hidden so they do not duplicate remapped next/prev.
+- **iOS** Control Center / lock screen: when primary is ±10, numbered skip-interval commands are enabled; next/prev are hidden so the icons match. When primary is track skip, next/prev skip tracks and the numbered buttons are hidden. iOS cannot split Control Center from Bluetooth.
 
 Headset prev/next go through the **logical album queue**, not ExoPlayer’s windowed timeline (which often has the playing item at index 0).
 

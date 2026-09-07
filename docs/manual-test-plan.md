@@ -151,11 +151,13 @@ Expect `200`, TLS OK, JSON `{"version": …}` matching `pages.dev`.
 
 **Get the URL onto the phone**
 
-| What you are testing | How |
-|---|---|
-| Metro / `expo start` | Restart Metro after `.env` change. Not an APK test. |
+
+| What you are testing                                | How                                                                                                                                                                                                   |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Metro / `expo start`                                | Restart Metro after `.env` change. Not an APK test.                                                                                                                                                   |
 | Sideload **preview** APK (`runtimeVersion` `1.0.3`) | `OTA_ALLOW_NATIVE_CHANGE=1 npm run ota:publish` then cold start or Settings → Check for update. Fingerprint will complain because `eas.json` changed; the override is correct for this env-only edit. |
-| Play / **production** AAB | `OTA_ALLOW_NATIVE_CHANGE=1 OTA_CHANNEL=production npm run ota:publish` — only when you want store users on the new host. |
+| Play / **production** AAB                           | `OTA_ALLOW_NATIVE_CHANGE=1 OTA_CHANNEL=production npm run ota:publish` — only when you want store users on the new host.                                                                              |
+
 
 Do not rebuild Android just for this URL.
 
@@ -181,6 +183,8 @@ Do not rebuild Android just for this URL.
 Crash last-run (system **Alert**, not a custom Modal): [crash-reporting-test.md](./crash-reporting-test.md) §B. Skip if you already passed §7 on this APK.
 
 ---
+
+
 
 ## Punjabi pass
 

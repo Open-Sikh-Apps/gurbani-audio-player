@@ -1,6 +1,7 @@
 import { Stack } from "expo-router";
 
 import { AppToastSlot } from "@/feedback/toast";
+import { IosModalOfflineBanner } from "@/components/offline-chrome";
 import { useOfflineStackOptions } from "@/hooks/use-offline-stack-options";
 import { useSafeBottomPad } from "@/hooks/use-safe-bottom-pad";
 import { useThemeColors } from "@/theme/use-theme-colors";
@@ -14,6 +15,7 @@ export default function SettingsLayout() {
   // Full-screen modal sits outside the tab-bar toast host. `relative` pins this slot to the modal, not the window under it.
   return (
     <View className="relative flex-1">
+      <IosModalOfflineBanner />
       <Stack
         screenOptions={{
           ...offlineHeader,

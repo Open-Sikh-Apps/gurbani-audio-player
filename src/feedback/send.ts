@@ -50,12 +50,19 @@ export async function openFeedbackMail(): Promise<void> {
   const subject = encodeURIComponent(i18n.t("feedback.mailSubject"));
   const body = encodeURIComponent(versionBody());
   const url = `mailto:${FEEDBACK_EMAIL}?subject=${subject}&body=${body}`;
-  const can = await Linking.canOpenURL(url);
-  if (can) {
-    await Linking.openURL(url);
-    return;
+  try {
+    const can = await Linking.canOpenURL(url);
+    if (can) {
+      await Linking.openURL(url);
+      return;
+    }
+  } catch {
+    // iOS canOpenURL is true without Mail; openURL then throws.
   }
-  // No mail app (some Android SKUs). Clipboard so they can paste into Gmail later.
+  // No mail app (some Android SKUs, many iPads). Clipboard so they can paste later.
   await Clipboard.setStringAsync(`${FEEDBACK_EMAIL}\n${versionBody()}`);
-  Alert.alert(i18n.t("settings.giveFeedback"), i18n.t("feedback.copied"));
+  Alert.alert(
+    i18n.t("settings.giveFeedback"),
+    i18n.t("feedback.copied", { email: FEEDBACK_EMAIL }),
+  );
 }

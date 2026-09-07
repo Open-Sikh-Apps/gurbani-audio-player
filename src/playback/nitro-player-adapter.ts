@@ -5,7 +5,7 @@ import {
   TrackPlayer,
   type PlayerState,
 } from "react-native-nitro-player";
-import { AppState, type NativeEventSubscription } from "react-native";
+import { AppState, Platform, type NativeEventSubscription } from "react-native";
 
 import { pickThemedUrl } from "@/catalogue/themed-url";
 import i18n from "@/i18n";
@@ -358,9 +358,15 @@ export function createNitroPlayerEngine(): PlayerEngine {
         ) {
           return;
         }
+        // iOS TimeJumped can emit the pre-seek time after lock-screen prev-to-0.
+        const jumpedToStart =
+          Platform.OS === "ios" &&
+          position < 1.5 &&
+          (cachedNative.currentPosition ?? 0) > 3;
         if (
           Date.now() < ignoreProgressUntil &&
-          Math.abs(position - seekAnchorSec) > 3
+          Math.abs(position - seekAnchorSec) > 3 &&
+          !jumpedToStart
         ) {
           return;
         }
@@ -425,6 +431,33 @@ export function createNitroPlayerEngine(): PlayerEngine {
     emit();
   }
 
+  async function finishOverflowSkip(
+    positionSec: number,
+    trackId?: string,
+  ): Promise<void> {
+    seekAnchorSec = positionSec;
+    ignoreProgressUntil = Date.now() + IGNORE_PROGRESS_MS;
+    if (Platform.OS !== "ios") {
+      return;
+    }
+    // skipToIndex+seek at a track edge can leave AVPlayer waitingToPlay.
+    if (wantsPlaying) {
+      await TrackPlayer.play();
+    }
+    patchCachedTimeline(positionSec);
+    const after = await refreshFromNative();
+    if (
+      wantsPlaying &&
+      session &&
+      !after.playing &&
+      (after.buffering || isNativePlaybackDead(cachedNative))
+    ) {
+      await rebuildNativeFromSession({ trackId, positionSec });
+      await TrackPlayer.play();
+      await refreshFromNative();
+    }
+  }
+
   async function seekByOverflowing(deltaSec: number): Promise<void> {
     // Leftover ±10 at a track edge lands on the neighbour; first/last tracks clamp.
     const state = await TrackPlayer.getState();
@@ -465,8 +498,7 @@ export function createNitroPlayerEngine(): PlayerEngine {
       if (pos > 0) {
         await TrackPlayer.seek(pos);
       }
-      seekAnchorSec = pos;
-      ignoreProgressUntil = Date.now() + IGNORE_PROGRESS_MS;
+      await finishOverflowSkip(pos, prev?.id);
       return;
     }
     if (
@@ -506,8 +538,7 @@ export function createNitroPlayerEngine(): PlayerEngine {
       if (leftover > 0) {
         await TrackPlayer.seek(leftover);
       }
-      seekAnchorSec = leftover;
-      ignoreProgressUntil = Date.now() + IGNORE_PROGRESS_MS;
+      await finishOverflowSkip(leftover, nextTrack?.id);
       return;
     }
 

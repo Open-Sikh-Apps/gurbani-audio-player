@@ -4,6 +4,14 @@
 @import "nativewind/theme";
 @import "./theme/palette.generated.css";
 
+/* PostScript names — RN has no @font-face, and font-semibold is a weight, not a face. */
+@theme {
+  --font-gurmukhi: "NotoSansGurmukhi-Regular";
+  --font-gurmukhi-medium: "NotoSansGurmukhi-Medium";
+  --font-gurmukhi-semibold: "NotoSansGurmukhi-SemiBold";
+  --font-gurmukhi-bold: "NotoSansGurmukhi-Bold";
+}
+
 @media android {
   :root {
     --font-mono: monospace;
@@ -17,7 +25,8 @@
   :root {
     --font-mono: ui-monospace;
     --font-serif: ui-serif;
-    --font-sans: system-ui;
+    /* Do not force system-ui — that wins over Noto and shows Apple's Gurmukhi. */
+    --font-sans: normal;
     --font-rounded: ui-rounded;
   }
 }

@@ -205,7 +205,7 @@ export function setRemotePrimary(primary: RemotePrimary): void {
 }
 
 export function formatDuration(sec: number): string {
-  const total = Math.max(0, Math.floor(sec));
+  const total = Math.max(0, Math.floor(Number.isFinite(sec) ? sec : 0));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const seconds = total % 60;

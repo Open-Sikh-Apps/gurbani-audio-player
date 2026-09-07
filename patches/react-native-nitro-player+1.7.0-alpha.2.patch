@@ -935,7 +935,7 @@ index d02bb11..3ff3218 100644
      }
    }
 diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerCore.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerCore.swift
-index 50df2f2..d02a707 100644
+index 50df2f2..db999e3 100644
 --- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerCore.swift
 +++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerCore.swift
 @@ -56,6 +56,12 @@ class TrackPlayerCore: NSObject {
@@ -951,7 +951,19 @@ index 50df2f2..d02a707 100644
    internal var boundaryTimeObserver: Any?
    internal var currentItemObservers: [NSKeyValueObservation] = []
  
-@@ -295,11 +301,26 @@ extension Array {
+@@ -283,6 +289,11 @@ class TrackPlayerCore: NSObject {
+     }
+   }
+ 
++  /// AVPlayer reads NaN/Inf at end-of-file and with no currentItem. Keep those off the JS timeline.
++  func finiteSeconds(_ value: Double, fallback: Double = 0) -> Double {
++    (value.isFinite && value >= 0) ? value : fallback
++  }
++
+   deinit {
+     NitroPlayerLogger.log("TrackPlayerCore", "🧹 deinit")
+   }
+@@ -295,11 +306,26 @@ extension Array {
    }
  }
  
@@ -980,10 +992,26 @@ index 50df2f2..d02a707 100644
 +  }
  }
 diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
-index 302aebf..895758b 100644
+index 302aebf..27e0dd7 100644
 --- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
 +++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
-@@ -146,6 +146,7 @@ extension TrackPlayerCore {
+@@ -109,12 +109,11 @@ extension TrackPlayerCore {
+     guard let player, let currentItem = player.currentItem else { return }
+     guard player.rate > 0 else { return }
+ 
+-    let position = currentItem.currentTime().seconds
+-    let rawDuration = currentItem.duration.seconds
+-    let duration = (rawDuration > 0 && !rawDuration.isNaN && !rawDuration.isInfinite) ? rawDuration : 0.0
++    let position = finiteSeconds(currentItem.currentTime().seconds, fallback: lastKnownPosition)
++    let duration = finiteSeconds(currentItem.duration.seconds)
+ 
+     // Remember the position so we can resume here if the item has to be recreated.
+-    if position.isFinite && position >= 0 { lastKnownPosition = position }
++    lastKnownPosition = position
+ 
+     NitroPlayerLogger.log("TrackPlayerCore", "⏱️ Boundary crossed - position: \(Int(position))s / duration: \(duration)s")
+ 
+@@ -146,6 +145,7 @@ extension TrackPlayerCore {
          if player.status == .readyToPlay { self.emitStateChange() }
          else if player.status == .failed {
            NitroPlayerLogger.log("TrackPlayerCore", "❌ Player failed")
@@ -991,7 +1019,7 @@ index 302aebf..895758b 100644
            self.notifyPlaybackStateChange(.stopped, .error)
          }
        } else if keyPath == "rate" {
-@@ -210,6 +211,7 @@ extension TrackPlayerCore {
+@@ -210,6 +210,7 @@ extension TrackPlayerCore {
      else { return }
      playerQueue.async { [weak self] in
        NitroPlayerLogger.log("TrackPlayerCore", "❌ Playback failed - \(error)")
@@ -999,8 +1027,74 @@ index 302aebf..895758b 100644
        self?.notifyPlaybackStateChange(.stopped, .error)
      }
    }
+@@ -229,10 +230,14 @@ extension TrackPlayerCore {
+     playerQueue.async { [weak self] in
+       guard let self, let player = self.player, let currentItem = player.currentItem else { return }
+       guard (notification.object as? AVPlayerItem) === currentItem else { return }
+-      let position = currentItem.currentTime().seconds
+-      let duration = currentItem.duration.seconds
++      let position = self.finiteSeconds(currentItem.currentTime().seconds, fallback: self.lastKnownPosition)
++      let duration = self.finiteSeconds(currentItem.duration.seconds)
+       NitroPlayerLogger.log("TrackPlayerCore", "🎯 Time jumped (seek detected) - position: \(Int(position))s")
+-      self.notifySeek(position, duration)
++      // seekInternal already emits the requested position in its completion.
++      // TimeJumped can still carry the pre-seek time (lock-screen prev-to-0).
++      if !self.isManuallySeeked {
++        self.notifySeek(position, duration)
++      }
+       self.isManuallySeeked = true
+       self.handleBoundaryTimeCrossed()
+     }
+@@ -283,9 +288,6 @@ extension TrackPlayerCore {
+     suppressTrackChangeEmit = false
+ 
+     if !isRecoveryReplace {
+-      // Genuine new track — reset per-track state.
+-      // Resume position is per-track; recovery captured what it needs before the swap.
+-      lastKnownPosition = 0
+       // A new track is not a stall recovery — drop any stale flag from the old item.
+       isRecoveringFromStall = false
+       // Fresh failure-retry budget for the new track.
+@@ -317,10 +319,22 @@ extension TrackPlayerCore {
+           notifyTrackChange(firstTrack, .repeat)
+         }
+         notifyTemporaryQueueChange()
++      } else {
++        // Repeat off, queue empty — Android emits STATE_ENDED. Drop intendedToPlay
++        // so waitingToPlay is not reported as buffering (stuck spinner at 0).
++        self.intendedToPlay = false
++        self.isRecoveringFromStall = false
++        self.player?.pause()
++        self.notifyPlaybackStateChange(.stopped, .end)
+       }
+       return
+     }
+ 
++    if !isRecoveryReplace {
++      // Queue-end keeps lastKnownPosition so getState can report the last frame, not 0.
++      lastKnownPosition = 0
++    }
++
+     let isRepeatLoop =
+       currentRepeatMode == .track && currentItem.trackId != nil
+       && currentItem.trackId == lastCurrentItemTrackId
+@@ -568,10 +582,12 @@ extension TrackPlayerCore {
+   func emitStateChange(reason: Reason? = nil) {
+     guard let player else { return }
+     let state: TrackPlayerState
+-    if player.timeControlStatus == .playing {
++    if player.currentItem == nil {
++      state = .stopped
++    } else if player.timeControlStatus == .playing {
+       state = .playing
+     } else if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+-      state = .buffering
++      state = intendedToPlay ? .buffering : .paused
+     } else if isRecoveringFromStall {
+       // Stalled with automaticallyWaitsToMinimizeStalling == false: timeControlStatus
+       // reads .paused, but we are buffering, not user-paused — report it as such.
 diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerPlayback.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerPlayback.swift
-index 00514ae..c5608bb 100644
+index 00514ae..3effe3d 100644
 --- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerPlayback.swift
 +++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerPlayback.swift
 @@ -103,13 +103,19 @@ extension TrackPlayerCore {
@@ -1074,7 +1168,7 @@ index 00514ae..c5608bb 100644
    func seekByOnQueue(offset: Double) {
      if isCasting {
        let position = castManager?.lastKnownRemotePosition ?? 0
-@@ -170,11 +207,37 @@ extension TrackPlayerCore {
+@@ -170,11 +207,39 @@ extension TrackPlayerCore {
      guard let player = self.player else { return }
      let position = player.currentTime().seconds
      guard position.isFinite else { return }
@@ -1096,6 +1190,7 @@ index 00514ae..c5608bb 100644
 +      let remainder = -target
 +      _ = skipToIndexInternal(index: prevIndex)
 +      seekInternal(position: max(0, prevDur - remainder))
++      if intendedToPlay { playInternal() }
 +      return
 +    }
 +    if offset > 0, duration > 0, target > duration, currentTrackIndex < currentTracks.count - 1 {
@@ -1106,6 +1201,7 @@ index 00514ae..c5608bb 100644
 +      let leftover = target - duration
 +      _ = skipToIndexInternal(index: currentTrackIndex + 1)
 +      seekInternal(position: leftover)
++      if intendedToPlay { playInternal() }
 +      return
      }
 -    seekInternal(position: target)
@@ -1116,6 +1212,112 @@ index 00514ae..c5608bb 100644
    }
    func seekBy(offset: Double) async {
      await withPlayerQueueNoThrow { self.seekByOnQueue(offset: offset) }
+@@ -205,6 +270,12 @@ extension TrackPlayerCore {
+         if let error = currentItem.error {
+           NitroPlayerLogger.log("TrackPlayerCore", "❌ Current item error: \(error.localizedDescription)")
+         }
++      } else if !currentTracks.isEmpty {
++        // Album ended and the AVQueuePlayer is empty. Rebuild the last track at 0
++        // so lock-screen play matches Android replay (JS engine.play() also rebuilds).
++        let index = currentTrackIndex >= 0 && currentTrackIndex < currentTracks.count
++          ? currentTrackIndex : 0
++        _ = rebuildQueueFromPlaylistIndex(index: index)
+       }
+       player.rate = Float(currentPlaybackSpeed)
+       playerQueue.asyncAfter(deadline: .now() + Constants.stateChangeDelay) { [weak self] in
+@@ -230,7 +301,7 @@ extension TrackPlayerCore {
+     guard let player = self.player else { return }
+     self.isManuallySeeked = true
+     let time = CMTime(seconds: position, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+-    player.seek(to: time) { _ in
++    player.seek(to: time) { [weak self] _ in
+        // HackFix I dont know how to fix this, but it works.
+       let rate = Double(player.rate)
+       DispatchQueue.main.async {
+@@ -240,8 +311,14 @@ extension TrackPlayerCore {
+           MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+         }
+       }
+-      // No notifySeek here — the same seek fires AVPlayerItemTimeJumped,
+-      // whose handler already emits it; calling both doubled every onSeek.
++      // TimeJumped can report the pre-seek time (lock-screen prev-to-0). Emit the
++      // requested position after the seek finishes so JS scrubbers stay in sync.
++      guard let self else { return }
++      self.playerQueue.async {
++        let rawDuration = player.currentItem?.duration.seconds ?? 0
++        let duration = (rawDuration > 0 && rawDuration.isFinite) ? rawDuration : 0.0
++        self.notifySeek(position, duration)
++      }
+     }
+   }
+ 
+@@ -303,10 +380,11 @@ extension TrackPlayerCore {
+   func skipToPreviousInternal() {
+     guard let queuePlayer = self.player else { return }
+ 
+-    let currentTime = queuePlayer.currentTime()
+-    if currentTime.seconds > Constants.skipToPreviousThreshold {
++    let rawElapsed = queuePlayer.currentTime().seconds
++    let elapsed = (rawElapsed.isFinite && rawElapsed > 0) ? rawElapsed : 0.0
++    if elapsed > Constants.skipToPreviousThreshold {
+       // If more than threshold seconds in, restart current track
+-      queuePlayer.seek(to: .zero)
++      seekInternal(position: 0)
+     } else if self.currentTemporaryType != .none {
+       // Playing temporary track — remove from its list, then go back to original track
+       if let trackId = queuePlayer.currentItem?.trackId {
+@@ -325,7 +403,7 @@ extension TrackPlayerCore {
+       _ = rebuildQueueFromPlaylistIndex(index: self.currentTrackIndex - 1)
+     } else {
+       // Already at first track, restart it
+-      queuePlayer.seek(to: .zero)
++      seekInternal(position: 0)
+     }
+ 
+     checkUpcomingTracksForUrls(lookahead: lookaheadCount)
+diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueue.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueue.swift
+index a1e0cb5..2393432 100644
+--- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueue.swift
++++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueue.swift
+@@ -70,13 +70,25 @@ extension TrackPlayerCore {
+       )
+     }
+     let currentTrack = getCurrentTrack()
+-    let currentPosition = player.currentTime().seconds
++    let catalogDuration = currentTrack?.duration ?? 0
+     let rawDuration = player.currentItem?.duration.seconds ?? 0.0
+-    let totalDuration = (rawDuration > 0 && !rawDuration.isNaN && !rawDuration.isInfinite) ? rawDuration : 0.0
++    let itemDuration = finiteSeconds(rawDuration)
++    let totalDuration = itemDuration > 0 ? itemDuration : finiteSeconds(catalogDuration)
++    // Empty queue / EoF reads NaN. Last-frame time (not 0) so JS `atEnd` matches Android ENDED.
++    let currentPosition =
++      player.currentItem == nil
++        ? finiteSeconds(lastKnownPosition, fallback: totalDuration)
++        : finiteSeconds(player.currentTime().seconds, fallback: lastKnownPosition)
+ 
+     let state: TrackPlayerState
+-    if player.timeControlStatus == .playing { state = .playing }
+-    else if player.timeControlStatus == .waitingToPlayAtSpecifiedRate { state = .buffering }
++    if player.currentItem == nil {
++      state = .stopped
++    } else if player.timeControlStatus == .playing { state = .playing }
++    else if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
++      // Match Android: buffering only while we still intend to play. Queue-end
++      // leaves AVPlayer waiting with intendedToPlay true and JS shows a spinner at 0.
++      state = intendedToPlay ? .buffering : .paused
++    }
+     else if player.rate == 0 { state = .paused }
+     else { state = .stopped }
+ 
+@@ -205,7 +217,7 @@ extension TrackPlayerCore {
+ 
+     // Case 2: Target is current - seek to beginning
+     if index == currentPos {
+-      player?.seek(to: .zero)
++      seekInternal(position: 0)
+       return true
+     }
+ 
 diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueueBuild.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueueBuild.swift
 index 73f79ff..4a680e2 100644
 --- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueueBuild.swift
@@ -1271,7 +1473,7 @@ index 0760693..84ca820 100644
  
    func getTracksNeedingUrlsInternal() -> [TrackItem] {
 diff --git a/node_modules/react-native-nitro-player/ios/media/MediaSessionManager.swift b/node_modules/react-native-nitro-player/ios/media/MediaSessionManager.swift
-index b0d88af..9249016 100644
+index b0d88af..368f87c 100644
 --- a/node_modules/react-native-nitro-player/ios/media/MediaSessionManager.swift
 +++ b/node_modules/react-native-nitro-player/ios/media/MediaSessionManager.swift
 @@ -28,6 +28,7 @@ class MediaSessionManager {
@@ -1300,13 +1502,14 @@ index b0d88af..9249016 100644
      updateSkipCommandIntervals()
      refresh()
    }
-@@ -233,19 +236,27 @@ class MediaSessionManager {
+@@ -233,19 +236,28 @@ class MediaSessionManager {
        return .success
      }
  
 -    // Next track
-+    // Next / previous: Bluetooth and Control Center share these. When primary
-+    // is ±interval they seek; track skip stays in-app (iOS cannot split them).
++    // Next / previous: Bluetooth and Control Center share these. Track skip
++    // when primary is skip; when primary is ±10 they stay disabled (interval
++    // commands own Control Center so the icons match).
      commandCenter.nextTrackCommand.isEnabled = false
      commandCenter.nextTrackCommand.addTarget { [weak self] _ in
 -      guard let core = self?.trackPlayerCore else { return .commandFailed }
@@ -1334,19 +1537,20 @@ index b0d88af..9249016 100644
        return .success
      }
  
-@@ -319,10 +330,12 @@ class MediaSessionManager {
+@@ -319,10 +331,12 @@ class MediaSessionManager {
      let playerDuration = state.totalDuration
      let hasDuration = playerDuration > 0 && !playerDuration.isNaN && !playerDuration.isInfinite
  
 -    commandCenter.nextTrackCommand.isEnabled = hasCurrentTrack && isNotLast
-+    commandCenter.nextTrackCommand.isEnabled = hasCurrentTrack && (remotePrimarySeek || isNotLast)
-     commandCenter.previousTrackCommand.isEnabled = hasCurrentTrack
+-    commandCenter.previousTrackCommand.isEnabled = hasCurrentTrack
 -    commandCenter.skipForwardCommand.isEnabled = hasCurrentTrack
 -    commandCenter.skipBackwardCommand.isEnabled = hasCurrentTrack
-+    // Skip-interval commands are the Control Center secondary when primary is track skip.
-+    // When primary is seek they would duplicate remapped next/prev, so hide them.
-+    commandCenter.skipForwardCommand.isEnabled = hasCurrentTrack && !remotePrimarySeek
-+    commandCenter.skipBackwardCommand.isEnabled = hasCurrentTrack && !remotePrimarySeek
++    commandCenter.nextTrackCommand.isEnabled = hasCurrentTrack && !remotePrimarySeek && isNotLast
++    commandCenter.previousTrackCommand.isEnabled = hasCurrentTrack && !remotePrimarySeek
++    // ±10 uses skip-interval commands so Control Center shows numbered icons.
++    // Track skip uses next/prev. iOS cannot split those from Bluetooth.
++    commandCenter.skipForwardCommand.isEnabled = hasCurrentTrack && remotePrimarySeek
++    commandCenter.skipBackwardCommand.isEnabled = hasCurrentTrack && remotePrimarySeek
      commandCenter.changePlaybackRateCommand.isEnabled = hasCurrentTrack
      commandCenter.changePlaybackPositionCommand.isEnabled = hasCurrentTrack && hasDuration
    }

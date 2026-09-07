@@ -57,14 +57,11 @@ function LibraryAlbumRow({ item }: { item: SehajPaathCollection }) {
       onPress={() => navigate(`/album/${item.id}`)}
     >
       <View className="flex-row items-center gap-2">
-        <View className="flex-row flex-wrap min-w-0 flex-1">
-          <Text className={cn(ui.text, subtitle, "shrink-0 max-w-full font-semibold")}>
-            {`${t("collection.sehaj_paath")} · `}
+        <View className="min-w-0 flex-1 gap-1">
+          <Text className={cn(ui.text, subtitle, "font-semibold")} numberOfLines={2}>
+            {`${t("collection.sehaj_paath")} · ${scriptureName}`}
           </Text>
-          <Text className={cn(ui.text, subtitle, "shrink-0 max-w-full font-semibold")}>
-            {scriptureName}
-          </Text>
-          <Text className={cn(ui.muted, subtitle, "shrink-0 max-w-full")}>
+          <Text className={cn(ui.muted, subtitle)} numberOfLines={2}>
             {heading}
           </Text>
         </View>

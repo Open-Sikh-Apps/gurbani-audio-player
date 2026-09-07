@@ -5,7 +5,7 @@ import {
   setConfig,
   type DownloadTask,
 } from "@kesha-antonov/react-native-background-downloader";
-import { Alert, AppState } from "react-native";
+import { Alert, AppState, Platform } from "react-native";
 import { Mutex } from "async-mutex";
 
 import {
@@ -26,7 +26,7 @@ import {
   refreshBatchesFromFiles,
   useDownloadStore,
 } from "@/downloads/store";
-import { isCellular, isOnline } from "@/downloads/network";
+import { isCellular, isOnline, subscribeNetwork } from "@/downloads/network";
 import {
   albumIdFromDownloadNotificationId,
   albumNotificationId,
@@ -111,9 +111,12 @@ const liveNotices = new Map<string, LiveNotice>();
 // Restored paused jobs (force-stop recovery). resume() through the pump —
 // createDownloadTask().start() would cleanupStaleState and delete the partial.
 const reattachedPaused = new Map<string, DownloadTask>();
+const iosRetriedOnce = new Set<string>();
+let iosSessionWarmed = false;
 let drainRunning = false;
 let languageHooked = false;
 let appStateHooked = false;
+let networkHooked = false;
 let completeScanHooked = false;
 let initPromise: Promise<void> | null = null;
 let suppressDownloadNotices = false;
@@ -230,6 +233,10 @@ function applyCellularPolicy(): void {
     progressInterval: PROGRESS_INTERVAL_MS,
     progressMinBytes: PROGRESS_MIN_BYTES,
     maxParallelDownloads: MAX_PARALLEL_DOWNLOADS,
+    ...(Platform.OS === "ios"
+      ? // Locked-screen URLSession must still write the dest file.
+        { iosDataProtection: "none" as const }
+      : {}),
     // Android 14 UIDT still posts a silent mini notice. Do not enable library
     // grouping — that adds a second English summary next to notify-kit.
     showNotificationsEnabled: false,
@@ -677,8 +684,14 @@ function waitForPumpSlot(): Promise<void> {
   });
 }
 
-function armSlotWatchdog(trackId: string): void {
+function armSlotWatchdog(item: PumpItem): void {
+  const trackId = item.trackId;
+  const delayMs = Platform.OS === "ios" ? 8_000 : 20_000;
   setTimeout(() => {
+    // JS timers can fire once while locking; do not stop a live URLSession job.
+    if (Platform.OS === "ios" && AppState.currentState !== "active") {
+      return;
+    }
     if (!startedByPump.has(trackId)) {
       return;
     }
@@ -686,10 +699,33 @@ function armSlotWatchdog(trackId: string): void {
     if (live != null && live.bytesDownloaded > 0) {
       return;
     }
+    if (Platform.OS === "ios" && !iosRetriedOnce.has(trackId) && stillQueued(item)) {
+      iosRetriedOnce.add(trackId);
+      void retryStalledIosDownload(item);
+      return;
+    }
     // Native start/resume produced no bytes. Free the slot so the rest of
     // the album is not stuck behind a silent UIDT/FGS failure.
     resolveSettleWaiter(trackId);
-  }, 20_000);
+  }, delayMs);
+}
+
+async function retryStalledIosDownload(item: PumpItem): Promise<void> {
+  // Background URLSession often swallows the first task until it is warmed;
+  // stop and re-queue so later jobs are not blocked by a zombie first id.
+  await stopLiveTask(item.trackId);
+  resolveSettleWaiter(item.trackId);
+  if (stillQueued(item)) {
+    enqueuePump(item);
+  }
+}
+
+async function warmIosDownloader(): Promise<void> {
+  if (Platform.OS !== "ios" || iosSessionWarmed) {
+    return;
+  }
+  await withTimeout(getExistingDownloadTasks(), 3000, []);
+  iosSessionWarmed = true;
 }
 
 // Cap new start() calls only. Reattached native jobs are not in startedByPump —
@@ -701,9 +737,16 @@ async function drainPump(): Promise<void> {
   drainRunning = true;
   try {
     while (pumpQueue.length > 0) {
-      if (startedByPump.size >= MAX_PARALLEL_DOWNLOADS) {
+      const iosLocked =
+        Platform.OS === "ios" && AppState.currentState !== "active";
+      // URLSession queues extra tasks; JS slots freeze when the screen locks.
+      if (!iosLocked && startedByPump.size >= MAX_PARALLEL_DOWNLOADS) {
         await waitForPumpSlot();
         continue;
+      }
+      // Restored iOS URLSession jobs hang when started offline; leave them queued.
+      if (Platform.OS === "ios" && !isOnline()) {
+        break;
       }
       const item = pumpQueue.shift();
       if (!item) {
@@ -733,7 +776,7 @@ async function drainPump(): Promise<void> {
         void paused.resume().catch(() => {
           resolveSettleWaiter(item.trackId);
         });
-        armSlotWatchdog(item.trackId);
+        armSlotWatchdog(item);
         continue;
       }
       if (liveTasks.has(item.trackId)) {
@@ -743,8 +786,9 @@ async function drainPump(): Promise<void> {
       ensureSettleWaiter(item.trackId);
       startedByPump.add(item.trackId);
       try {
+        await warmIosDownloader();
         startNativeTask(item);
-        armSlotWatchdog(item.trackId);
+        armSlotWatchdog(item);
       } catch {
         resolveSettleWaiter(item.trackId);
       }
@@ -760,6 +804,56 @@ async function drainPump(): Promise<void> {
 function enqueuePump(item: PumpItem): void {
   pumpQueue.push(item);
   void drainPump();
+}
+
+/** Register remaining queued jobs with URLSession so they continue after JS is frozen. */
+function startRemainingIosDownloadsNow(): void {
+  if (Platform.OS !== "ios" || !isOnline()) {
+    return;
+  }
+  const leftover = pumpQueue.splice(0, pumpQueue.length);
+  for (const item of leftover) {
+    if (!stillQueued(item)) {
+      reattachedPaused.delete(item.trackId);
+      continue;
+    }
+    if (liveTasks.has(item.trackId)) {
+      continue;
+    }
+    const paused = reattachedPaused.get(item.trackId);
+    if (paused) {
+      reattachedPaused.delete(item.trackId);
+      finishedBeforeWaiter.delete(item.trackId);
+      ensureSettleWaiter(item.trackId);
+      startedByPump.add(item.trackId);
+      bindTask(
+        paused,
+        {
+          albumId: item.albumId,
+          trackId: item.trackId,
+          remoteUrl: item.remoteUrl,
+          mode: item.mode,
+        },
+        item.title,
+        item.reciterName,
+      );
+      void paused.resume().catch(() => {
+        resolveSettleWaiter(item.trackId);
+      });
+      continue;
+    }
+    finishedBeforeWaiter.delete(item.trackId);
+    ensureSettleWaiter(item.trackId);
+    startedByPump.add(item.trackId);
+    try {
+      startNativeTask(item);
+    } catch {
+      resolveSettleWaiter(item.trackId);
+    }
+  }
+  while (slotWaiters.length > 0) {
+    slotWaiters.shift()?.();
+  }
 }
 
 function bindTask(
@@ -847,6 +941,7 @@ async function finishTask(
     useDownloadStore.getState().setProgress(meta.trackId, null);
   }
   resolveSettleWaiter(meta.trackId);
+  iosRetriedOnce.delete(meta.trackId);
   if (outcome === "completed" && !alreadySettled) {
     notifyPlaybackQueueSourcesChanged();
   }
@@ -929,6 +1024,10 @@ function startNativeTask(input: PumpItem): void {
     } satisfies TaskMeta,
     // UIDT reads this per-task flag; setConfig.allowsCellularAccess alone is not enough.
     isAllowedOverMetered: !wifiOnly,
+    ...(Platform.OS === "ios"
+      ? // Locked-screen URLSession must still write the dest file.
+        { iosDataProtection: "none" as const }
+      : {}),
   });
   bindTask(
     task,
@@ -1093,6 +1192,7 @@ export async function cancelDownloads(
         continue;
       }
       await stopLiveTask(track.trackId);
+      iosRetriedOnce.delete(track.trackId);
       deleteLocalFile(track.trackId);
       useDownloadStore
         .getState()
@@ -1411,6 +1511,31 @@ function enqueueLeftoverInFlight(): void {
   }
 }
 
+/** Stop live iOS jobs so a lost connection cannot leave the album bar/notification spinning. */
+async function parkLiveIosDownloads(): Promise<void> {
+  const trackIds = [...liveTasks.keys()];
+  const albumIds = new Set<string>();
+  for (const trackId of trackIds) {
+    const file = filesForTrack(trackId)[0];
+    await stopLiveTask(trackId);
+    if (
+      file &&
+      file.status !== "completed" &&
+      file.status !== "failed" &&
+      file.status !== "orphan"
+    ) {
+      useDownloadStore.getState().patchFile(makeKey(file.trackId, file.remoteUrl), {
+        status: "queued",
+      });
+      albumIds.add(file.albumId);
+    }
+  }
+  enqueueLeftoverInFlight();
+  for (const albumId of albumIds) {
+    await notifyAlbum(albumId, true);
+  }
+}
+
 async function resumeStalledDownloads(): Promise<void> {
   if (albumBatches.size === 0 && inFlightDownloadFiles().length > 0) {
     rebuildAlbumBatches([], new Set());
@@ -1435,7 +1560,34 @@ function hookDownloadResumeOnActive(): void {
     AppState.addEventListener("change", (state) => {
       if (state === "active") {
         void resumeStalledDownloads();
+        return;
       }
+      if (
+        Platform.OS === "ios" &&
+        (state === "inactive" || state === "background")
+      ) {
+        // Hand remaining queued files to URLSession before JS is frozen.
+        void mutex.runExclusive(async () => {
+          await warmIosDownloader();
+          enqueueLeftoverInFlight();
+          startRemainingIosDownloadsNow();
+        });
+      }
+    });
+  }
+  if (!networkHooked) {
+    networkHooked = true;
+    subscribeNetwork((online) => {
+      if (Platform.OS !== "ios") {
+        return;
+      }
+      void mutex.runExclusive(async () => {
+        if (!online) {
+          await parkLiveIosDownloads();
+        } else {
+          enqueueLeftoverInFlight();
+        }
+      });
     });
   }
   if (completeScanHooked) {
@@ -1497,6 +1649,12 @@ async function attachExistingTasks(
       if (nativeTaskFinished(task) && !nativeTaskPaused(task)) {
         void releaseNativeTask(task);
       }
+      continue;
+    }
+    if (Platform.OS === "ios") {
+      // Restored URLSession jobs sit DOWNLOADING at 0 bytes and never tick.
+      // Binding them skips enqueueLeftoverInFlight and stalls the album bar.
+      await releaseNativeTask(task);
       continue;
     }
     if (nativeTaskPaused(task)) {
