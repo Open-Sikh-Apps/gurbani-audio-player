@@ -34,8 +34,7 @@ This app is fully open-source and built for the community.
 
 We seek your blessings. Bhul chuk muaf jio.
 
-#### Waheguru Ji Ka Khalsa
-#### Waheguru Ji Ki Fateh ji
+#### Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh ji
 
 
 ###### Android Sreenshots
