@@ -1,3 +1,4 @@
+import * as Application from "expo-application";
 import Constants from "expo-constants";
 import * as Clipboard from "expo-clipboard";
 import * as Updates from "expo-updates";
@@ -16,13 +17,8 @@ function orUnknown(value: string | number | null | undefined): string {
 }
 
 function nativeBuild(): string {
-  if (Platform.OS === "android") {
-    return orUnknown(Constants.expoConfig?.android?.versionCode);
-  }
-  if (Platform.OS === "ios") {
-    return orUnknown(Constants.expoConfig?.ios?.buildNumber);
-  }
-  return "unknown";
+  // Binary versionCode / CFBundleVersion. Not expoConfig — that can be wrong after an OTA.
+  return orUnknown(Application.nativeBuildVersion);
 }
 
 function otaChannel(): string {
