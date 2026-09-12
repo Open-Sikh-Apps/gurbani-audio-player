@@ -14,7 +14,10 @@
     "simpleModeOff": "Use standard layout",
     "done": "Get started",
     "notificationsTitle": "Device notifications are required",
-    "notificationsBody": "They show what is playing and download progress, including when you leave the app. Playback and downloads need this permission."
+    "notificationsBody": "They show what is playing and download progress, including when you leave the app. Playback and downloads need this permission.",
+    "batteryLaterInSettings": "You can open this later from Settings.",
+    "batteryOpenSettings": "Open app settings",
+    "skip": "Skip"
   },
   "settings": {
     "title": "Settings",
@@ -158,7 +161,7 @@
     "downloadSelected": "Download",
     "removeAll": "Remove all downloads",
     "removeAllTitle": "Remove downloads?",
-    "removeAllBody": "This deletes downloaded parts for this album from the phone. The part that is playing now is kept.",
+    "removeAllBody": "This deletes downloaded and downloading parts for this album from the phone. The part that is playing now is kept.",
     "removeTrackTitle": "Remove download?",
     "removeTrackBody": "This part will need the internet to play.",
     "remove": "Remove",
@@ -187,6 +190,8 @@
     "startedTracks_other": "Downloading {{count}} parts",
     "addedTracks_one": "Added {{count}} part to the download",
     "addedTracks_other": "Added {{count}} parts to the download",
+    "pausedWhilePlaying": "Downloads paused while playing",
+    "pausedWhilePlayingTrack": "Download paused",
     "notificationChannel": "Downloads",
     "notificationAlbum": "Downloading album",
     "notificationAlbumBody": "{{done}} of {{total}} parts",
@@ -196,7 +201,9 @@
   },
   "ota": {
     "check": "Check for update",
-    "none": "You're on the latest version.",
+    "none": "You're on the latest in-app update.",
+    "storeBody": "You're on the latest in-app update. Open the store to check for a newer app version.",
+    "openStore": "Open store",
     "disabled": "Updates are not available in this install.",
     "busyTitle": "Apply update?",
     "busyBody": "This stops playback and downloads, then restarts the app. The screen may go blank for a few seconds. Please wait.",
@@ -207,7 +214,8 @@
     "loading": "Loading…",
     "silentTitle": "Update ready",
     "silentBody": "The app will update. This may take a few moments, and the screen may go blank. Please wait.",
-    "silentOk": "OK"
+    "silentOk": "OK",
+    "pleaseWait": "Please wait"
   },
   "crash": {
     "title": "Something went wrong",

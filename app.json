@@ -15,7 +15,7 @@
       "en": "./src/i18n/native-metadata/en.json",
       "pa": "./src/i18n/native-metadata/pa.json"
     },
-    "runtimeVersion": "1.0.5",
+    "runtimeVersion": "1.0.7",
     "updates": {
       "url": "https://updatesgurbaniaudioplayer.opensikhapps.com",
       "checkAutomatically": "NEVER",
@@ -25,9 +25,20 @@
       }
     },
     "ios": {
+      "buildNumber": "4",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "icon": {
+        "light": "./assets/icon-light.png",
+        "dark": "./assets/icon-dark.png"
+      },
       "supportsTablet": true,
       "requireFullScreen": true,
       "bundleIdentifier": "com.opensikhapps.gurbaniaudioplayer",
+      "associatedDomains": [
+        "applinks:gurbaniaudioplayer.opensikhapps.com"
+      ],
       "usesIcloudStorage": false,
       "infoPlist": {
         "CFBundleAllowMixedLocalizations": true,
@@ -44,7 +55,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.opensikhapps.gurbaniaudioplayer",
-      "versionCode": 4,
+      "versionCode": 5,
       "googleServicesFile": "./google-services.json",
       "allowBackup": false,
       "permissions": [

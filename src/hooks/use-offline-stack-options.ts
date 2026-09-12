@@ -1,12 +1,24 @@
 import type { ComponentProps } from "react";
-import { Platform } from "react-native";
+import { TextStyle } from "react-native";
 import { Stack } from "expo-router";
 
 import { useIsOnline } from "@/downloads";
+import { useChrome } from "@/hooks/use-chrome";
 import { useResolvedLocale } from "@/hooks/use-resolved-locale";
 import { fontFamilyForLocale } from "@/i18n/locales";
 
 type StackOptions = NonNullable<ComponentProps<typeof Stack>["screenOptions"]>;
+
+/** Native headerTitleStyle cannot use NativeWind tokens — mirror useChrome title scale. */
+function headerTitleFontSize(titleClass: string): number {
+  if (titleClass.includes("text-4xl")) {
+    return 36;
+  }
+  if (titleClass.includes("text-3xl")) {
+    return 30;
+  }
+  return 24;
+}
 
 /**
  * Nested stacks wrap SafeAreaProviderCompat, and on Android 15
@@ -18,12 +30,14 @@ type StackOptions = NonNullable<ComponentProps<typeof Stack>["screenOptions"]>;
 export function useOfflineStackOptions(): StackOptions {
   const online = useIsOnline();
   const locale = useResolvedLocale();
-  // Native headers never go through `@/tw` Text, so Punjabi would stay Apple Gurmukhi.
-  const fontFamily =
-    Platform.OS === "ios" ? fontFamilyForLocale(locale) : undefined;
-  const font: StackOptions = fontFamily
-    ? { headerTitleStyle: { fontFamily } }
-    : {};
+  const { title } = useChrome();
+  // Native headers never go through `@/tw` Text, so Punjabi would stay system Gurmukhi.
+  const fontFamily = fontFamilyForLocale(locale);
+  const headerTitleStyle: TextStyle = {
+    fontSize: headerTitleFontSize(title),
+    ...(fontFamily ? { fontFamily } : {}),
+  };
+  const font = { headerTitleStyle } as StackOptions;
   if (online) {
     return font;
   }

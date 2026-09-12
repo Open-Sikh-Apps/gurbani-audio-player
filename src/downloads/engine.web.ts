@@ -11,6 +11,13 @@ export function isCurrentlyPlayingTrack(_trackId: string): boolean {
   return false;
 }
 
+export function isTrackDownloadHeldForPlayback(
+  _trackId: string,
+  _status?: unknown,
+): boolean {
+  return false;
+}
+
 export function playableUrlFor(
   _trackId: string,
   _remoteUrl: string,

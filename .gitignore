@@ -65,3 +65,4 @@ dist-update/
 .wrangler
 
 temp
+build-ios.ipa

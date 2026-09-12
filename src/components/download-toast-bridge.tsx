@@ -15,11 +15,13 @@ export function DownloadToastBridge() {
       return;
     }
     const message =
-      snackbar.kind === "startedTrack"
-        ? t("download.startedTrack")
-        : snackbar.kind === "addedTracks"
-          ? t("download.addedTracks", { count: snackbar.count })
-          : t("download.startedTracks", { count: snackbar.count });
+      snackbar.kind === "pausedForPlayback"
+        ? t("download.pausedWhilePlaying")
+        : snackbar.kind === "startedTrack"
+          ? t("download.startedTrack")
+          : snackbar.kind === "addedTracks"
+            ? t("download.addedTracks", { count: snackbar.count })
+            : t("download.startedTracks", { count: snackbar.count });
     showToast(message);
     // Consume immediately so a later store tick does not re-show the same toast.
     clearSnackbar(snackbar.id);

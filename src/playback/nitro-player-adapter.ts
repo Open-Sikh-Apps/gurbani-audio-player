@@ -40,6 +40,7 @@ import {
   REMOTE_SKIP_SEC,
   IGNORE_PROGRESS_MS,
   PAUSE_REWIND_SEC,
+  SKIP_TO_PREVIOUS_THRESHOLD_SEC,
   ANDROID_NOTIFICATION_ICON,
   DEFAULT_REMOTE_PRIMARY,
   type LoadAlbumOptions,
@@ -145,6 +146,14 @@ export function createNitroPlayerEngine(): PlayerEngine {
 
   function emit(next?: PlayerStatus): void {
     const status = next ?? currentStatus();
+    if (Platform.OS === "ios") {
+      const prev = usePlaybackStore.getState().session;
+      // Progress ticks must not pass a new session object with the same URLs —
+      // AlbumScreen's FlashList data would rebuild on every complete.
+      if (prev && status.session && snapshotsEqual(prev, status.session)) {
+        status.session = prev;
+      }
+    }
     usePlaybackStore.setState(status);
     debouncedPersist(status);
   }
@@ -274,24 +283,40 @@ export function createNitroPlayerEngine(): PlayerEngine {
             }
           })();
         } else if (reason === "end") {
-          wantsPlaying = false;
-          albumEnded = true;
-          const ended = currentStatus();
-          if (session && ended.currentTrackId) {
-            // Native is stopped, so persistNow below skips. Keep the last frame —
-            // writing 0 looks like the last track never started. play() restarts
-            // from 0 when albumEnded / atEnd.
-            persistAlbumResume(session.albumId, {
-              trackId: ended.currentTrackId,
-              positionSec:
-                ended.durationSec > 0
-                  ? ended.durationSec
-                  : ended.positionSec,
-              updatedAt: Date.now(),
-              ...(ended.durationSec > 0
-                ? { durationSec: ended.durationSec }
-                : {}),
+          if (Platform.OS === "ios") {
+            // Capture before refresh: empty AV queue reports index 0 / no track.
+            const endedIndex = currentStatus().currentIndex;
+            const endedTrackId = currentStatus().currentTrackId;
+            fire(async () => {
+              if (await continueIosPastFalseAlbumEnd(endedIndex, endedTrackId)) {
+                return;
+              }
+              wantsPlaying = false;
+              albumEnded = true;
+              wasPlaying = false;
+              persistIosEndedFrame(endedTrackId);
+              await refreshFromNative();
             });
+          } else {
+            wantsPlaying = false;
+            albumEnded = true;
+            const ended = currentStatus();
+            if (session && ended.currentTrackId) {
+              // Native is stopped, so persistNow below skips. Keep the last frame —
+              // writing 0 looks like the last track never started. play() restarts
+              // from 0 when albumEnded / atEnd.
+              persistAlbumResume(session.albumId, {
+                trackId: ended.currentTrackId,
+                positionSec:
+                  ended.durationSec > 0
+                    ? ended.durationSec
+                    : ended.positionSec,
+                updatedAt: Date.now(),
+                ...(ended.durationSec > 0
+                  ? { durationSec: ended.durationSec }
+                  : {}),
+              });
+            }
           }
         } else if (nativeState === "playing") {
           lastError = null;
@@ -305,6 +330,9 @@ export function createNitroPlayerEngine(): PlayerEngine {
           lastError = null;
         }
         void refreshFromNative().then(async (status) => {
+          if (Platform.OS === "ios" && reason === "end") {
+            return;
+          }
           const pausedNow =
             wasPlaying && !status.playing && !status.buffering;
           wasPlaying = status.playing;
@@ -337,8 +365,11 @@ export function createNitroPlayerEngine(): PlayerEngine {
           }
           // Offline/missing-file pauses must not look like a user pause (no 2s rewind).
           skipPauseRewind = false;
+          // pausedNow already rewound+swapped. This covers nativeState !== "paused"
+          // (and the synthetic pause after loadIntoNative, which is then a no-op).
           if (
             !status.playing &&
+            !status.buffering &&
             cachedNative &&
             !isNativePlaybackDead(cachedNative)
           ) {
@@ -594,15 +625,72 @@ export function createNitroPlayerEngine(): PlayerEngine {
     };
   }
 
-  /** Patch upcoming URLs after a download; pin the playing item so it is not restarted. Reload the current item only while paused. */
+  function persistIosEndedFrame(trackId: string | null): void {
+    if (!session || !trackId) {
+      return;
+    }
+    const ended = currentStatus();
+    persistAlbumResume(session.albumId, {
+      trackId,
+      positionSec:
+        ended.durationSec > 0 ? ended.durationSec : ended.positionSec,
+      updatedAt: Date.now(),
+      ...(ended.durationSec > 0 ? { durationSec: ended.durationSec } : {}),
+    });
+  }
+
+  // AVQueuePlayer emits album-end when preloaded https next-items fail offline,
+  // even though the JS session still has tracks (often already on disk).
+  async function continueIosPastFalseAlbumEnd(
+    endedIndex: number,
+    endedTrackId: string | null,
+  ): Promise<boolean> {
+    if (!session) {
+      return false;
+    }
+    const index =
+      endedTrackId != null ? trackIndex(session, endedTrackId) : endedIndex;
+    if (index < 0 || index >= session.tracks.length - 1) {
+      return false;
+    }
+    const resolved = withLocalUrls(session);
+    const nextTrack = resolved.tracks[index + 1];
+    if (!nextTrack) {
+      return false;
+    }
+    if (
+      !isOnline() &&
+      playableUrlFor(nextTrack.id, nextTrack.remoteUrl) == null
+    ) {
+      lastError = i18n.t("player.offlineStreamError");
+      wantsPlaying = false;
+      albumEnded = false;
+      wasPlaying = false;
+      persistIosEndedFrame(endedTrackId);
+      emit();
+      return true;
+    }
+    albumEnded = false;
+    wantsPlaying = true;
+    lastError = null;
+    skipPauseRewind = true;
+    await loadIntoNative(resolved, { trackId: nextTrack.id, positionSec: 0 });
+    await TrackPlayer.play();
+    wasPlaying = true;
+    await refreshFromNative();
+    return true;
+  }
+
+  /** Patch upcoming URLs after a download (android only); pin the playing item so it is not restarted. Reload the current item only while paused (after pause-rewind, or a complete download that finishes while already paused). */
   async function applyUpcomingSourceUpdates(): Promise<void> {
     if (!session) {
       return;
     }
     const status = currentStatus();
-    const merged = status.playing
-      ? withLocalUrlsPinnedCurrent(session, status.currentTrackId)
-      : withLocalUrls(session);
+    const merged =
+      status.playing || status.buffering
+        ? withLocalUrlsPinnedCurrent(session, status.currentTrackId)
+        : withLocalUrls(session);
     if (snapshotsEqual(session, merged)) {
       return;
     }
@@ -615,7 +703,8 @@ export function createNitroPlayerEngine(): PlayerEngine {
       ? trackInSession(merged, currentId)?.url
       : undefined;
     // Native updateTracks will not change the current item's URL; reload while paused instead.
-    if (!status.playing && currentId && previousUrl !== nextUrl) {
+    // skipPauseRewind: loadIntoNative+pause emits a synthetic pause — do not rewind again.
+    if (!status.playing && !status.buffering && currentId && previousUrl !== nextUrl) {
       skipPauseRewind = true;
       await loadIntoNative(merged, {
         trackId: currentId,
@@ -628,8 +717,15 @@ export function createNitroPlayerEngine(): PlayerEngine {
       }
       return;
     }
+    // iOS: updateTracks / loadIntoNative of a 140+ item AVQueuePlayer hangs the
+    // main thread (first freeze: "before" with no "after"). Pause used to take
+    // that path because playing is false. skip/end still resolve file: from disk.
+    if (Platform.OS === "ios") {
+      return;
+    }
     session = freezeSession(merged);
     await TrackPlayer.updateTracks(toTrackItems(session));
+    nativeSourceUrls = session.tracks.map((track) => track.url);
   }
 
   // onTrackChange is after native already started this item — rebuild if native URL is stale.
@@ -707,7 +803,15 @@ export function createNitroPlayerEngine(): PlayerEngine {
       return;
     }
     const missingFile = isLocalUrl(held) || isLocalUrl(track.url);
-    if (missingFile && playableUrlFor(track.id, track.remoteUrl)) {
+    // iOS: download finished while this item was a preloaded https AVPlayerItem.
+    // Do not treat "session is already file:" as a vanished-file no-op.
+    const iosHeldStreamHasFile =
+      Platform.OS === "ios" && isLocalUrl(wanted) && !isLocalUrl(held);
+    if (
+      !iosHeldStreamHasFile &&
+      missingFile &&
+      playableUrlFor(track.id, track.remoteUrl)
+    ) {
       return;
     }
     if (!isOnline() && playableUrlFor(track.id, track.remoteUrl) == null) {
@@ -977,7 +1081,7 @@ export function createNitroPlayerEngine(): PlayerEngine {
         await ensureConfigured();
         await TrackPlayer.pause();
         persistNow(await refreshFromNative());
-        await applyUpcomingSourceUpdates();
+        // File swap runs after pause-rewind in the native paused listener.
       });
     },
     next() {
@@ -1000,7 +1104,20 @@ export function createNitroPlayerEngine(): PlayerEngine {
         if (!session) {
           return;
         }
-        const prevIndex = Math.max(0, currentStatus().currentIndex - 1);
+        const status = currentStatus();
+        // Native skipToPrevious restarts after ~2s. skipToResolvedIndex would
+        // load the previous file:/https slot at 0 whenever that URL went local.
+        if (status.positionSec > SKIP_TO_PREVIOUS_THRESHOLD_SEC) {
+          await withNativeReady(async () => {
+            seekAnchorSec = 0;
+            ignoreProgressUntil = Date.now() + IGNORE_PROGRESS_MS;
+            await TrackPlayer.seek(0);
+            patchCachedTimeline(0);
+          });
+          persistNow(await refreshFromNative());
+          return;
+        }
+        const prevIndex = Math.max(0, status.currentIndex - 1);
         await skipToResolvedIndex(prevIndex, () =>
           withNativeReady(() => TrackPlayer.skipToPrevious()),
         );

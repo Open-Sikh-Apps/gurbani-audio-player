@@ -39,15 +39,10 @@ function formatPlayedAt(playedAt: number, locale: string): string {
 }
 
 function resumePositionSec(
-  isLatest: boolean,
   albumId: string,
   trackId: string,
   durationSec: number | undefined,
 ): number | null {
-  // Only the newest row may use per-album resume, and only when it is this track mid-way.
-  if (!isLatest) {
-    return null;
-  }
   const resume = getAlbumResume(albumId);
   if (!resume || resume.trackId !== trackId) {
     return null;
@@ -60,10 +55,8 @@ function resumePositionSec(
 
 function HistoryRow({
   item,
-  isLatest,
 }: {
   item: HistoryEntry;
-  isLatest: boolean;
 }) {
   const { t } = useTranslation();
   const { text, hit, title, tabIcon } = useChrome();
@@ -111,7 +104,6 @@ function HistoryRow({
       : false,
   );
   const liveNow = usePlaybackStore((state) =>
-    isLatest &&
     state.session?.albumId === item.albumId &&
     state.currentTrackId === item.trackId &&
     (state.playing || state.buffering),
@@ -119,7 +111,7 @@ function HistoryRow({
   // Live playback is already in the player — keep the row tappable so offline users can open Now Playing.
   const muted = !online && !downloaded && !liveNow;
   const resumeAt = useResumeStore((state) => {
-    if (!isLatest || liveNow) {
+    if (liveNow) {
       return null;
     }
     const resume = state.positions[item.albumId];
@@ -140,7 +132,6 @@ function HistoryRow({
   async function playEntry(): Promise<void> {
     const live = usePlaybackStore.getState();
     const liveNowPress =
-      isLatest &&
       live.session?.albumId === item.albumId &&
       live.currentTrackId === item.trackId &&
       (live.playing || live.buffering);
@@ -160,7 +151,6 @@ function HistoryRow({
       ? getScriptureById(catalogue, collection.scriptureId)
       : undefined;
     const at = resumePositionSec(
-      isLatest,
       item.albumId,
       item.trackId,
       durationSec,
@@ -258,7 +248,7 @@ export function HistoryScreen() {
             contentContainerClassName="px-6 py-6"
             renderItem={({ item, index }) => (
               // Newest-first: only the top row may resume mid-track
-              <HistoryRow item={item} isLatest={index === 0} />
+              <HistoryRow item={item} />
             )}
           />
         </View>

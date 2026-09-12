@@ -20,6 +20,7 @@ import {
   fileForTrackOnAlbum,
   batchSnapshotForAlbum,
   filesForTrack,
+  flushDeferredDownloadsPersist,
   getFile,
   isTrackDownloaded,
   isTrackDownloading,
@@ -64,10 +65,89 @@ import { usePreferencesStore } from "@/state/preferences-store";
 // Catalogue byteSize can undershoot; 50 MB keeps enqueue from filling the last of the disk.
 const STORAGE_MARGIN_BYTES = 50 * 1024 * 1024;
 const NOTIFY_THROTTLE_MS = 800;
-// Must match native maxParallelDownloads. Starting more lets Android UIDT fail silently.
+// Android UIDT: starting more than this fails silently. iOS stays 1 always so
+// lock-screen play after a paused dump cannot run 3 CDN transfers next to AVPlayer.
 const MAX_PARALLEL_DOWNLOADS = 3;
 const PROGRESS_INTERVAL_MS = 1000;
 const PROGRESS_MIN_BYTES = 1_048_576;
+
+let pendingAlbumNoticeId: string | null = null;
+const iosIndeterminateAlbumIds = new Set<string>();
+const iosIndeterminateTrackIds = new Set<string>();
+
+function iosPlaybackBusy(): boolean {
+  if (Platform.OS !== "ios") {
+    return false;
+  }
+  const status = usePlaybackStore.getState();
+  return status.playing || status.buffering;
+}
+
+/** Percent / done-total only while paused with a live media session; else "Downloading…". */
+function iosCanShowDownloadProgress(): boolean {
+  if (Platform.OS !== "ios") {
+    return false;
+  }
+  const status = usePlaybackStore.getState();
+  return Boolean(status.session) && !status.playing && !status.buffering;
+}
+
+function iosProgressGateFromStatus(status: {
+  session: unknown;
+  playing: boolean;
+  buffering: boolean;
+}): boolean {
+  return Boolean(status.session) && !status.playing && !status.buffering;
+}
+
+function trackProgressPercent(trackId: string): number {
+  const live = useDownloadStore.getState().progress[trackId];
+  if (!live || live.bytesTotal <= 0) {
+    return 0;
+  }
+  return (live.bytesDownloaded / live.bytesTotal) * 100;
+}
+
+/** Force-refresh every live shade after the iOS progress gate flips. */
+function refreshLiveDownloadNotices(): void {
+  pendingAlbumNoticeId = null;
+  for (const notice of [...liveNotices.values()]) {
+    if (notice.kind === "album") {
+      void notifyAlbum(notice.albumId, true);
+      continue;
+    }
+    if (!notice.trackId) {
+      continue;
+    }
+    void notifyTrack(
+      notice.trackId,
+      notice.title,
+      notice.reciterName,
+      trackProgressPercent(notice.trackId),
+      notice.albumId,
+      true,
+    );
+  }
+}
+
+function maxParallelDownloads(): number {
+  return Platform.OS === "ios" ? 1 : MAX_PARALLEL_DOWNLOADS;
+}
+
+function hasUnheldLeftover(): boolean {
+  const held = playbackHeldTrackIds();
+  return inFlightDownloadFiles().some((file) => !held.has(file.trackId));
+}
+
+function notifyDownloadsPausedForPlayback(): void {
+  if (inFlightDownloadFiles().length === 0 || hasUnheldLeftover()) {
+    return;
+  }
+  useDownloadStore.getState().showSnackbar({
+    kind: "pausedForPlayback",
+    count: 0,
+  });
+}
 
 // Init, enqueue, and cancel share native job ids; overlapping calls would double-start.
 const mutex = new Mutex();
@@ -111,13 +191,14 @@ const liveNotices = new Map<string, LiveNotice>();
 // Restored paused jobs (force-stop recovery). resume() through the pump —
 // createDownloadTask().start() would cleanupStaleState and delete the partial.
 const reattachedPaused = new Map<string, DownloadTask>();
-const iosRetriedOnce = new Set<string>();
 let iosSessionWarmed = false;
 let drainRunning = false;
+let iosDumpingToNative = false;
 let languageHooked = false;
 let appStateHooked = false;
 let networkHooked = false;
 let completeScanHooked = false;
+let playbackKickHooked = false;
 let initPromise: Promise<void> | null = null;
 let suppressDownloadNotices = false;
 
@@ -226,16 +307,25 @@ function nativeTaskFinished(task: DownloadTask): boolean {
   return task.bytesTotal > 0 && task.bytesDownloaded >= task.bytesTotal;
 }
 
+/** `stop()` deletes the dest. iOS may report 0 downloaded while the partial is on disk. */
+function iosTaskHasSavedProgress(task: DownloadTask, trackId: string): boolean {
+  if (task.bytesDownloaded > 0) {
+    return true;
+  }
+  const onDisk = downloadedBytesOnDisk(trackId);
+  return onDisk != null && onDisk > 0;
+}
+
 function applyCellularPolicy(): void {
   const wifiOnly = usePreferencesStore.getState().wifiOnlyDownloads !== false;
   setConfig({
     allowsCellularAccess: !wifiOnly,
     progressInterval: PROGRESS_INTERVAL_MS,
     progressMinBytes: PROGRESS_MIN_BYTES,
-    maxParallelDownloads: MAX_PARALLEL_DOWNLOADS,
+    maxParallelDownloads: maxParallelDownloads(),
     ...(Platform.OS === "ios"
       ? // Locked-screen URLSession must still write the dest file.
-        { iosDataProtection: "none" as const }
+      { iosDataProtection: "none" as const }
       : {}),
     // Android 14 UIDT still posts a silent mini notice. Do not enable library
     // grouping — that adds a second English summary next to notify-kit.
@@ -322,6 +412,48 @@ export function isCurrentlyPlayingTrack(trackId: string): boolean {
   );
 }
 
+// Nitro keeps the current item plus `gaplessPreloadCount` (3) upcoming AVPlayer
+// items. URLSession of those same CDN URLs often never ticks while they buffer.
+function playbackHeldTrackIds(
+  status = usePlaybackStore.getState(),
+): Set<string> {
+  const ids = new Set<string>();
+  if (Platform.OS !== "ios") {
+    return ids;
+  }
+  if ((!status.playing && !status.buffering) || !status.session) {
+    return ids;
+  }
+  const index = status.currentIndex;
+  if (index < 0) {
+    return ids;
+  }
+  const last = Math.min(status.session.tracks.length, index + 1 + 3);
+  for (let i = index; i < last; i += 1) {
+    const id = status.session.tracks[i]?.id;
+    if (id) {
+      ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/** True when this track’s download is deferred for the iOS gapless window. */
+export function isTrackDownloadHeldForPlayback(
+  trackId: string,
+  status = usePlaybackStore.getState(),
+): boolean {
+  return playbackHeldTrackIds(status).has(trackId);
+}
+
+function shouldDeferForPlayback(item: PumpItem): boolean {
+  if (Platform.OS !== "ios" || !iosPlaybackBusy()) {
+    return false;
+  }
+  // Never URLSession the gapless window (current + next 3) while AVPlayer holds it.
+  return playbackHeldTrackIds().has(item.trackId);
+}
+
 export function playableUrlFor(
   trackId: string,
   remoteUrl: string,
@@ -335,6 +467,14 @@ export function playableUrlFor(
 
 // Dynamic import so downloads → playback/engine → adapter → downloads stays off the static graph.
 function notifyPlaybackQueueSourcesChanged(): void {
+  // While playing, iOS skip/onTrackChange resolve file: from disk. Do not
+  // queue the player mutex on every complete (that raced play() while buffering).
+  if (Platform.OS === "ios") {
+    const status = usePlaybackStore.getState();
+    if (status.playing || status.buffering) {
+      return;
+    }
+  }
   void import("@/playback/live-queue").then((mod) => {
     mod.notifyLiveQueueSourcesChanged();
   });
@@ -516,6 +656,33 @@ async function notifyAlbum(albumId: string, force = false): Promise<void> {
   if (total === 0) {
     return;
   }
+  // Idle (no session / JS suspended) or playing: one "Downloading…" post — a
+  // frozen done/total looks stuck. Percent resumes when paused with a session.
+  if (Platform.OS === "ios" && !iosCanShowDownloadProgress()) {
+    pendingAlbumNoticeId = albumId;
+    if (iosIndeterminateAlbumIds.has(albumId) && !force) {
+      return;
+    }
+    iosIndeterminateAlbumIds.add(albumId);
+    const id = albumNotificationId(albumId);
+    const displayTitle = localizedAlbumNoticeTitle(albumId, title);
+    liveNotices.set(id, {
+      kind: "album",
+      albumId,
+      title: displayTitle,
+      percent: 0,
+    });
+    lastNotifyAt.set(id, Date.now());
+    await showProgressNotification({
+      id,
+      title: displayTitle,
+      body: i18n.t("download.notificationTrack"),
+      percent: 0,
+      albumId,
+    });
+    return;
+  }
+  iosIndeterminateAlbumIds.delete(albumId);
   const id = albumNotificationId(albumId);
   const now = Date.now();
   const last = lastNotifyAt.get(id) ?? 0;
@@ -548,6 +715,39 @@ async function notifyTrack(
   force = false,
 ): Promise<void> {
   const id = trackNotificationId(trackId);
+  let notificationTitle: string;
+  if (Platform.OS === "ios") {
+    notificationTitle = `${title} · ${reciterName}`;
+  } else {
+    notificationTitle = title;
+  }
+
+  if (Platform.OS === "ios" && !iosCanShowDownloadProgress() && percent < 100) {
+    if (iosIndeterminateTrackIds.has(trackId) && !force) {
+      return;
+    }
+    iosIndeterminateTrackIds.add(trackId);
+    lastNotifyAt.set(id, Date.now());
+    liveNotices.set(id, {
+      kind: "track",
+      albumId,
+      trackId,
+      title,
+      reciterName,
+      percent: 0,
+    });
+    await showProgressNotification({
+      id,
+      title: notificationTitle,
+      body: i18n.t("download.notificationTrack"),
+      percent: 0,
+      albumId,
+    });
+    return;
+  }
+  if (Platform.OS === "ios") {
+    iosIndeterminateTrackIds.delete(trackId);
+  }
   const now = Date.now();
   const last = lastNotifyAt.get(id) ?? 0;
   if (!force && now - last < NOTIFY_THROTTLE_MS && percent < 100) {
@@ -562,10 +762,14 @@ async function notifyTrack(
     reciterName,
     percent,
   });
+  const notificationBody =
+    Platform.OS === "ios"
+      ? `${Math.max(0, Math.min(100, Math.round(percent)))}%`
+      : reciterName || i18n.t("download.notificationTrack");
   await showProgressNotification({
     id,
-    title,
-    body: reciterName || i18n.t("download.notificationTrack"),
+    title: notificationTitle,
+    body: notificationBody,
     percent,
     albumId,
   });
@@ -648,7 +852,7 @@ function ensureSettleWaiter(trackId: string): Promise<void> {
   if (existing) {
     return existing.promise;
   }
-  let resolve = (): void => {};
+  let resolve = (): void => { };
   const promise = new Promise<void>((done) => {
     resolve = done;
   });
@@ -666,48 +870,73 @@ function resolveSettleWaiter(trackId: string): void {
   } else {
     finishedBeforeWaiter.add(trackId);
   }
-  while (slotWaiters.length > 0 && startedByPump.size < MAX_PARALLEL_DOWNLOADS) {
+  while (slotWaiters.length > 0 && startedByPump.size < maxParallelDownloads()) {
     slotWaiters.shift()?.();
   }
 }
 
 function waitForPumpSlot(): Promise<void> {
-  if (startedByPump.size < MAX_PARALLEL_DOWNLOADS) {
+  if (startedByPump.size < maxParallelDownloads()) {
     return Promise.resolve();
   }
   return new Promise((resolve) => {
     slotWaiters.push(resolve);
     // Job may have settled between the size check and the push.
-    if (startedByPump.size < MAX_PARALLEL_DOWNLOADS) {
+    if (startedByPump.size < maxParallelDownloads()) {
       slotWaiters.shift()?.();
     }
   });
 }
 
+function iosBackgrounded(): boolean {
+  return Platform.OS === "ios" && AppState.currentState === "background";
+}
+
 function armSlotWatchdog(item: PumpItem): void {
   const trackId = item.trackId;
-  const delayMs = Platform.OS === "ios" ? 8_000 : 20_000;
+  if (Platform.OS !== "ios") {
+    setTimeout(() => {
+      if (!startedByPump.has(trackId)) {
+        return;
+      }
+      const live = liveTasks.get(trackId);
+      if (live != null && live.bytesDownloaded > 0) {
+        return;
+      }
+      // Native start/resume produced no bytes. Free the slot so the rest of
+      // the album is not stuck behind a silent UIDT/FGS failure.
+      resolveSettleWaiter(trackId);
+    }, 20_000);
+    return;
+  }
+  const liveAtArm = liveTasks.get(trackId);
+  const bytesAtArm = liveAtArm?.bytesDownloaded ?? 0;
   setTimeout(() => {
     // JS timers can fire once while locking; do not stop a live URLSession job.
-    if (Platform.OS === "ios" && AppState.currentState !== "active") {
+    if (AppState.currentState !== "active") {
       return;
     }
     if (!startedByPump.has(trackId)) {
       return;
     }
     const live = liveTasks.get(trackId);
-    if (live != null && live.bytesDownloaded > 0) {
+    if (live != null && live.bytesDownloaded > bytesAtArm) {
       return;
     }
-    if (Platform.OS === "ios" && !iosRetriedOnce.has(trackId) && stillQueued(item)) {
-      iosRetriedOnce.add(trackId);
+    // e28e17a Android only frees the slot (20s). iOS stop()+restart at 8s was
+    // for AVPlayer-held CDN URLs that never tick — tearing those jobs down
+    // while AVPlayer is live freezes Now Playing (~6–10s into the stream).
+    if (iosPlaybackBusy() || playbackHeldTrackIds().has(trackId)) {
+      return;
+    }
+    if (stillQueued(item)) {
+      // Force-quit resume data can stall with no bytes. Retry only when the
+      // player is not using the network.
       void retryStalledIosDownload(item);
       return;
     }
-    // Native start/resume produced no bytes. Free the slot so the rest of
-    // the album is not stuck behind a silent UIDT/FGS failure.
     resolveSettleWaiter(trackId);
-  }, delayMs);
+  }, 8_000);
 }
 
 async function retryStalledIosDownload(item: PumpItem): Promise<void> {
@@ -731,16 +960,18 @@ async function warmIosDownloader(): Promise<void> {
 // Cap new start() calls only. Reattached native jobs are not in startedByPump —
 // occupying slots on them deadlocked the queue when `.done()` never fired after a kill.
 async function drainPump(): Promise<void> {
-  if (drainRunning) {
+  if (drainRunning || iosDumpingToNative) {
     return;
   }
   drainRunning = true;
   try {
     while (pumpQueue.length > 0) {
-      const iosLocked =
-        Platform.OS === "ios" && AppState.currentState !== "active";
-      // URLSession queues extra tasks; JS slots freeze when the screen locks.
-      if (!iosLocked && startedByPump.size >= MAX_PARALLEL_DOWNLOADS) {
+      if (iosDumpingToNative) {
+        break;
+      }
+      // iOS: always 1-wide. 3-wide while AVPlayer is live froze the UI
+      // (~31 small-file completes in ~6s on the same CDN as gapless items).
+      if (startedByPump.size >= maxParallelDownloads()) {
         await waitForPumpSlot();
         continue;
       }
@@ -752,9 +983,24 @@ async function drainPump(): Promise<void> {
       if (!item) {
         break;
       }
+      if (iosDumpingToNative) {
+        pumpQueue.unshift(item);
+        break;
+      }
       if (!stillQueued(item)) {
         reattachedPaused.delete(item.trackId);
         continue;
+      }
+      if (Platform.OS === "ios" && shouldDeferForPlayback(item)) {
+        pumpQueue.push(item);
+        if (pumpQueue.some((queued) => !playbackHeldTrackIds().has(queued.trackId))) {
+          continue;
+        }
+        if (startedByPump.size > 0) {
+          await waitForPumpSlot();
+          continue;
+        }
+        break;
       }
       const paused = reattachedPaused.get(item.trackId);
       if (paused) {
@@ -780,13 +1026,19 @@ async function drainPump(): Promise<void> {
         continue;
       }
       if (liveTasks.has(item.trackId)) {
-        continue;
+        // Android: leave the UIDT handle attached. stop() deletes the dest.
+        if (Platform.OS !== "ios" || startedByPump.has(item.trackId)) {
+          continue;
+        }
+        await stopLiveTask(item.trackId);
       }
       finishedBeforeWaiter.delete(item.trackId);
       ensureSettleWaiter(item.trackId);
       startedByPump.add(item.trackId);
       try {
-        await warmIosDownloader();
+        if (Platform.OS === "ios") {
+          await warmIosDownloader();
+        }
         startNativeTask(item);
         armSlotWatchdog(item);
       } catch {
@@ -795,7 +1047,19 @@ async function drainPump(): Promise<void> {
     }
   } finally {
     drainRunning = false;
-    if (pumpQueue.length > 0) {
+    if (Platform.OS !== "ios") {
+      if (pumpQueue.length > 0) {
+        void drainPump();
+      }
+      return;
+    }
+    // Do not spin while offline or while only AVPlayer-held tracks remain and
+    // nothing is pumping — pause / track change / the 5s scan re-enters drainPump.
+    const onlyHeldLeft =
+      startedByPump.size === 0 &&
+      pumpQueue.length > 0 &&
+      pumpQueue.every((queued) => shouldDeferForPlayback(queued));
+    if (pumpQueue.length > 0 && isOnline() && !onlyHeldLeft) {
       void drainPump();
     }
   }
@@ -806,53 +1070,83 @@ function enqueuePump(item: PumpItem): void {
   void drainPump();
 }
 
-/** Register remaining queued jobs with URLSession so they continue after JS is frozen. */
-function startRemainingIosDownloadsNow(): void {
-  if (Platform.OS !== "ios" || !isOnline()) {
-    return;
-  }
-  const leftover = pumpQueue.splice(0, pumpQueue.length);
-  for (const item of leftover) {
-    if (!stillQueued(item)) {
-      reattachedPaused.delete(item.trackId);
-      continue;
-    }
-    if (liveTasks.has(item.trackId)) {
-      continue;
-    }
-    const paused = reattachedPaused.get(item.trackId);
-    if (paused) {
-      reattachedPaused.delete(item.trackId);
-      finishedBeforeWaiter.delete(item.trackId);
+function handOffPumpItemToNative(item: PumpItem, occupyPumpSlot = true): void {
+  const paused = reattachedPaused.get(item.trackId);
+  if (paused) {
+    reattachedPaused.delete(item.trackId);
+    finishedBeforeWaiter.delete(item.trackId);
+    if (occupyPumpSlot) {
       ensureSettleWaiter(item.trackId);
       startedByPump.add(item.trackId);
-      bindTask(
-        paused,
-        {
-          albumId: item.albumId,
-          trackId: item.trackId,
-          remoteUrl: item.remoteUrl,
-          mode: item.mode,
-        },
-        item.title,
-        item.reciterName,
-      );
-      void paused.resume().catch(() => {
-        resolveSettleWaiter(item.trackId);
-      });
-      continue;
     }
-    finishedBeforeWaiter.delete(item.trackId);
+    bindTask(
+      paused,
+      {
+        albumId: item.albumId,
+        trackId: item.trackId,
+        remoteUrl: item.remoteUrl,
+        mode: item.mode,
+      },
+      item.title,
+      item.reciterName,
+    );
+    void paused.resume().catch(() => {
+      resolveSettleWaiter(item.trackId);
+    });
+    return;
+  }
+  finishedBeforeWaiter.delete(item.trackId);
+  if (occupyPumpSlot) {
     ensureSettleWaiter(item.trackId);
     startedByPump.add(item.trackId);
-    try {
-      startNativeTask(item);
-    } catch {
-      resolveSettleWaiter(item.trackId);
-    }
   }
-  while (slotWaiters.length > 0) {
-    slotWaiters.shift()?.();
+  try {
+    startNativeTask(item);
+  } catch {
+    resolveSettleWaiter(item.trackId);
+  }
+}
+
+/**
+ * Hand leftover JS queue to URLSession before lock freezes JS.
+ * Only `background` — Control Center wifi (`inactive`) after a kill used to
+ * dump the whole album and native-crashed. While playing, skip the gapless
+ * window. Do not occupy JS pump slots so pause can still start held rows.
+ */
+async function startRemainingIosDownloadsNow(): Promise<void> {
+  if (Platform.OS !== "ios" || !isOnline() || !iosBackgrounded()) {
+    return;
+  }
+  const held = iosPlaybackBusy() ? playbackHeldTrackIds() : new Set<string>();
+  const deferred: PumpItem[] = [];
+  suppressDownloadNotices = true;
+  try {
+    while (pumpQueue.length > 0 && iosBackgrounded() && isOnline()) {
+      const item = pumpQueue.shift();
+      if (!item) {
+        break;
+      }
+      if (!stillQueued(item)) {
+        reattachedPaused.delete(item.trackId);
+        continue;
+      }
+      if (held.has(item.trackId)) {
+        deferred.push(item);
+        continue;
+      }
+      if (liveTasks.has(item.trackId)) {
+        continue;
+      }
+      handOffPumpItemToNative(item, false);
+    }
+  } finally {
+    suppressDownloadNotices = false;
+    pumpQueue.push(...deferred);
+  }
+  if (!iosPlaybackBusy() || hasUnheldLeftover()) {
+    for (const albumId of albumBatches.keys()) {
+      void notifyAlbum(albumId);
+    }
   }
 }
 
@@ -898,8 +1192,13 @@ function bindTask(
       }
       void finishTask(task.id, meta, title, "completed", bytesDownloaded);
     })
-    .error(() => {
+    .error(({ errorCode }) => {
       if (liveTasks.get(task.id) !== task) {
+        return;
+      }
+      // Swipe-kill / stop() cancel is -999. A same-id replacement must not
+      // be marked failed if that event arrives after start().
+      if (Platform.OS === "ios" && errorCode === -999) {
         return;
       }
       void finishTask(task.id, meta, title, "failed");
@@ -941,7 +1240,6 @@ async function finishTask(
     useDownloadStore.getState().setProgress(meta.trackId, null);
   }
   resolveSettleWaiter(meta.trackId);
-  iosRetriedOnce.delete(meta.trackId);
   if (outcome === "completed" && !alreadySettled) {
     notifyPlaybackQueueSourcesChanged();
   }
@@ -965,6 +1263,7 @@ async function finishTask(
       removeFromAlbumBatch(meta.albumId, meta.trackId, outcome);
     } else {
       liveNotices.delete(trackNotificationId(meta.trackId));
+      iosIndeterminateTrackIds.delete(meta.trackId);
       lastNotifyAt.delete(trackNotificationId(meta.trackId));
     }
     return;
@@ -979,6 +1278,7 @@ async function finishTask(
       await notifyAlbum(meta.albumId);
     } else {
       liveNotices.delete(albumNotificationId(meta.albumId));
+      iosIndeterminateAlbumIds.delete(meta.albumId);
       await showCompleteNotification({
         id: albumNotificationId(meta.albumId),
         title: batchTitle,
@@ -991,6 +1291,7 @@ async function finishTask(
   }
   if (outcome === "completed") {
     liveNotices.delete(trackNotificationId(meta.trackId));
+    iosIndeterminateTrackIds.delete(meta.trackId);
     await showCompleteNotification({
       id: trackNotificationId(meta.trackId),
       title,
@@ -999,6 +1300,7 @@ async function finishTask(
     });
   } else {
     liveNotices.delete(trackNotificationId(meta.trackId));
+    iosIndeterminateTrackIds.delete(meta.trackId);
     await cancelDownloadNotification(trackNotificationId(meta.trackId));
   }
   lastNotifyAt.delete(trackNotificationId(meta.trackId));
@@ -1026,7 +1328,7 @@ function startNativeTask(input: PumpItem): void {
     isAllowedOverMetered: !wifiOnly,
     ...(Platform.OS === "ios"
       ? // Locked-screen URLSession must still write the dest file.
-        { iosDataProtection: "none" as const }
+      { iosDataProtection: "none" as const }
       : {}),
   });
   bindTask(
@@ -1125,16 +1427,18 @@ export async function enqueueDownloads(
       }
       syncBatchSnapshot(albumId);
     }
-    // At most 3 new native jobs; queued tracks wait here, not on reattached tasks.
+    // Pump slots match maxParallelDownloads; queued tracks wait here.
     for (const track of pending) {
       enqueuePump({ ...track, mode });
     }
     if (mode === "batch" && albumId) {
       void notifyAlbum(albumId);
       useDownloadStore.getState().showSnackbar(
-        alreadyBatch
-          ? { kind: "addedTracks", count: pending.length }
-          : { kind: "startedTracks", count: pending.length },
+        Platform.OS === "ios" && iosPlaybackBusy() && !hasUnheldLeftover()
+          ? { kind: "pausedForPlayback", count: pending.length }
+          : alreadyBatch
+            ? { kind: "addedTracks", count: pending.length }
+            : { kind: "startedTracks", count: pending.length },
       );
       return alreadyBatch ? "added" : "started";
     }
@@ -1149,10 +1453,11 @@ export async function enqueueDownloads(
         true,
       );
     }
-    useDownloadStore.getState().showSnackbar({
-      kind: "startedTrack",
-      count: 1,
-    });
+    useDownloadStore.getState().showSnackbar(
+      Platform.OS === "ios" && iosPlaybackBusy() && !hasUnheldLeftover()
+        ? { kind: "pausedForPlayback", count: 1 }
+        : { kind: "startedTrack", count: 1 },
+    );
     return "started";
   });
 }
@@ -1192,7 +1497,6 @@ export async function cancelDownloads(
         continue;
       }
       await stopLiveTask(track.trackId);
-      iosRetriedOnce.delete(track.trackId);
       deleteLocalFile(track.trackId);
       useDownloadStore
         .getState()
@@ -1203,8 +1507,10 @@ export async function cancelDownloads(
       }
       removeFromAlbumBatch(track.albumId, track.trackId, "cancelled");
       liveNotices.delete(trackNotificationId(track.trackId));
+      iosIndeterminateTrackIds.delete(track.trackId);
       if (!albumBatches.has(track.albumId)) {
         liveNotices.delete(albumNotificationId(track.albumId));
+        iosIndeterminateAlbumIds.delete(track.albumId);
       }
       await cancelDownloadNotification(trackNotificationId(track.trackId));
     }
@@ -1332,11 +1638,11 @@ function metaForTask(task: DownloadTask): TaskMeta | null {
     parseMeta(task) ??
     (stored
       ? {
-          albumId: stored.albumId,
-          trackId: stored.trackId,
-          remoteUrl: stored.remoteUrl,
-          mode: stored.mode === "single" ? "single" : "batch",
-        }
+        albumId: stored.albumId,
+        trackId: stored.trackId,
+        remoteUrl: stored.remoteUrl,
+        mode: stored.mode === "single" ? "single" : "batch",
+      }
       : null)
   );
 }
@@ -1445,6 +1751,9 @@ function downloadsNeedKick(): boolean {
   if (pumpQueue.length > 0 || startedByPump.size > 0) {
     return false;
   }
+  if (Platform.OS === "ios") {
+    return true;
+  }
   for (const file of inFlightDownloadFiles()) {
     if (liveTasks.has(file.trackId) || reattachedPaused.has(file.trackId)) {
       continue;
@@ -1452,6 +1761,22 @@ function downloadsNeedKick(): boolean {
     return true;
   }
   return false;
+}
+
+/** Drop JS handles that occupy liveTasks after the pump gave up, so leftover can start(). */
+async function releaseAbandonedLiveTasks(): Promise<void> {
+  if (Platform.OS !== "ios") {
+    return;
+  }
+  if (pumpQueue.length > 0 || startedByPump.size > 0) {
+    return;
+  }
+  for (const file of inFlightDownloadFiles()) {
+    if (!liveTasks.has(file.trackId) && !reattachedPaused.has(file.trackId)) {
+      continue;
+    }
+    await stopLiveTask(file.trackId);
+  }
 }
 
 async function scanInFlightCompletions(
@@ -1495,7 +1820,7 @@ async function scanInFlightCompletions(
   }
 }
 
-function enqueueLeftoverInFlight(): void {
+function enqueueLeftoverInFlight(drain = true): void {
   for (const file of inFlightDownloadFiles()) {
     if (liveTasks.has(file.trackId)) {
       continue;
@@ -1507,15 +1832,63 @@ function enqueueLeftoverInFlight(): void {
       continue;
     }
     const mode = fileEnqueueMode(file, new Set());
-    enqueuePump({ ...inputFromFile(file), mode });
+    const item = { ...inputFromFile(file), mode };
+    if (drain) {
+      enqueuePump(item);
+    } else {
+      pumpQueue.push(item);
+    }
+  }
+  if (Platform.OS === "ios" && drain) {
+    // Skipped rows may already sit in pumpQueue from an offline drain abort.
+    void drainPump();
   }
 }
 
-/** Stop live iOS jobs so a lost connection cannot leave the album bar/notification spinning. */
+async function stopAndRequeueLive(trackId: string): Promise<void> {
+  const file = filesForTrack(trackId)[0];
+  await stopLiveTask(trackId);
+  if (file && (file.status === "queued" || file.status === "downloading")) {
+    useDownloadStore.getState().patchFile(makeKey(file.trackId, file.remoteUrl), {
+      status: "queued",
+    });
+  }
+}
+
+/** Drop URLSession jobs that just entered the gapless window. */
+async function trimIosDownloadsForPlayback(): Promise<void> {
+  const held = playbackHeldTrackIds();
+  for (const trackId of [...liveTasks.keys()]) {
+    if (held.has(trackId)) {
+      await stopAndRequeueLive(trackId);
+    }
+  }
+  enqueueLeftoverInFlight();
+  notifyDownloadsPausedForPlayback();
+  if (hasUnheldLeftover()) {
+    for (const albumId of albumBatches.keys()) {
+      void notifyAlbum(albumId);
+    }
+  }
+}
+
+async function kickIosDownloadsAfterPlayback(): Promise<void> {
+  while (slotWaiters.length > 0 && startedByPump.size < maxParallelDownloads()) {
+    slotWaiters.shift()?.();
+  }
+  enqueueLeftoverInFlight();
+}
+
+/** Stop 0-byte iOS jobs when NetInfo goes offline. Partials stay; `stop()` would delete them. */
 async function parkLiveIosDownloads(): Promise<void> {
   const trackIds = [...liveTasks.keys()];
   const albumIds = new Set<string>();
   for (const trackId of trackIds) {
+    const live = liveTasks.get(trackId);
+    // stop() deletes the dest; keep a partial URLSession job until native fails.
+    if (live && iosTaskHasSavedProgress(live, trackId)) {
+      continue;
+    }
     const file = filesForTrack(trackId)[0];
     await stopLiveTask(trackId);
     if (
@@ -1542,6 +1915,7 @@ async function resumeStalledDownloads(): Promise<void> {
   }
   const completedNotices = new Map<string, { title: string; albumId: string }>();
   await scanInFlightCompletions(completedNotices);
+  await releaseAbandonedLiveTasks();
   if (downloadsNeedKick()) {
     enqueueLeftoverInFlight();
   } else if (inFlightDownloadFiles().length === 0) {
@@ -1559,36 +1933,96 @@ function hookDownloadResumeOnActive(): void {
     appStateHooked = true;
     AppState.addEventListener("change", (state) => {
       if (state === "active") {
+        if (Platform.OS === "ios" && iosPlaybackBusy()) {
+          enqueueLeftoverInFlight();
+          return;
+        }
         void resumeStalledDownloads();
         return;
       }
-      if (
-        Platform.OS === "ios" &&
-        (state === "inactive" || state === "background")
-      ) {
-        // Hand remaining queued files to URLSession before JS is frozen.
+      if (Platform.OS === "ios" && state === "background") {
+        // Lock only. Control Center / wifi-on is `inactive` — drainPump
+        // (1-wide) is the restore path, not a dump.
         void mutex.runExclusive(async () => {
-          await warmIosDownloader();
-          enqueueLeftoverInFlight();
-          startRemainingIosDownloadsNow();
+          iosDumpingToNative = true;
+          try {
+            await warmIosDownloader();
+            enqueueLeftoverInFlight(false);
+            await startRemainingIosDownloadsNow();
+          } finally {
+            iosDumpingToNative = false;
+          }
+          if (pumpQueue.length > 0) {
+            void drainPump();
+          }
         });
+        // Idle / playing: JS will suspend — leave "Downloading…" not a frozen count.
+        if (!iosCanShowDownloadProgress() && liveNotices.size > 0) {
+          refreshLiveDownloadNotices();
+        }
       }
     });
   }
   if (!networkHooked) {
     networkHooked = true;
-    subscribeNetwork((online) => {
-      if (Platform.OS !== "ios") {
-        return;
-      }
-      void mutex.runExclusive(async () => {
-        if (!online) {
-          await parkLiveIosDownloads();
-        } else {
-          enqueueLeftoverInFlight();
-        }
+    if (Platform.OS === "ios") {
+      subscribeNetwork((online) => {
+        void mutex.runExclusive(async () => {
+          if (!online) {
+            await parkLiveIosDownloads();
+          } else {
+            // Restore / wifi-on: JS pump only. Dumping here from Control Center
+            // after a kill native-crashed (~140 start()s of zombie sessions).
+            enqueueLeftoverInFlight();
+          }
+        });
       });
-    });
+    }
+  }
+  if (!playbackKickHooked) {
+    playbackKickHooked = true;
+    if (Platform.OS === "ios") {
+      usePlaybackStore.subscribe((state, prev) => {
+        const wasBusy = prev.playing || prev.buffering;
+        const isBusy = state.playing || state.buffering;
+        const wasCanShow = iosProgressGateFromStatus(prev);
+        const canShow = iosProgressGateFromStatus(state);
+        if (!wasBusy && isBusy) {
+          void mutex.runExclusive(async () => {
+            await trimIosDownloadsForPlayback();
+          });
+        }
+        if (wasBusy && !isBusy) {
+          flushDeferredDownloadsPersist();
+          void mutex.runExclusive(async () => {
+            await kickIosDownloadsAfterPlayback();
+          });
+        }
+        // Shade body: percent / done-total only when paused with a live session.
+        if (wasCanShow !== canShow && liveNotices.size > 0) {
+          refreshLiveDownloadNotices();
+        } else if (!wasCanShow && canShow && pendingAlbumNoticeId) {
+          const albumId = pendingAlbumNoticeId;
+          pendingAlbumNoticeId = null;
+          void notifyAlbum(albumId, true);
+        }
+        if (state.currentTrackId === prev.currentTrackId) {
+          return;
+        }
+        if (inFlightDownloadFiles().length === 0) {
+          return;
+        }
+        if (isBusy) {
+          // Gapless window moved; drop jobs that are now current/next 3.
+          void mutex.runExclusive(async () => {
+            await trimIosDownloadsForPlayback();
+          });
+          return;
+        }
+        // AVPlayer released the previous item; start the leftover playback-window jobs.
+        void resumeStalledDownloads();
+      });
+    }
   }
   if (completeScanHooked) {
     return;
@@ -1596,6 +2030,7 @@ function hookDownloadResumeOnActive(): void {
   completeScanHooked = true;
   // Restored UIDT jobs often never fire `.done()`. Finish from disk while bytes match.
   setInterval(() => {
+    flushDeferredDownloadsPersist();
     if (AppState.currentState !== "active") {
       return;
     }
@@ -1603,6 +2038,20 @@ function hookDownloadResumeOnActive(): void {
       return;
     }
     void scanInFlightCompletions();
+    if (Platform.OS === "ios") {
+      if (iosPlaybackBusy()) {
+        if (startedByPump.size === 0 && hasUnheldLeftover()) {
+          enqueueLeftoverInFlight();
+        }
+        return;
+      }
+      void (async () => {
+        await releaseAbandonedLiveTasks();
+        if (downloadsNeedKick()) {
+          enqueueLeftoverInFlight();
+        }
+      })();
+    }
   }, 5000);
 }
 
@@ -1651,23 +2100,28 @@ async function attachExistingTasks(
       }
       continue;
     }
-    if (Platform.OS === "ios") {
-      // Restored URLSession jobs sit DOWNLOADING at 0 bytes and never tick.
-      // Binding them skips enqueueLeftoverInFlight and stalls the album bar.
-      await releaseNativeTask(task);
-      continue;
-    }
-    if (nativeTaskPaused(task)) {
+    if (nativeTaskPaused(task) && Platform.OS !== "ios") {
       reattachedPaused.set(task.id, task);
       continue;
     }
+    if (Platform.OS === "ios") {
+      // Swipe-kill cancels URLSession. Those jobs come back PAUSED with -999
+      // resume data that never ticks, and RUNNING zombies hold the 3 slots.
+      // stop() drops the session temp; dest is only written on complete.
+      await releaseNativeTask(task);
+      continue;
+    }
     // Leave running/pending UIDT jobs attached. stop() cancels the job and
-    // deletes the partial; start() then hits cleanupStaleState and can fail
+    // deletes the dest; start() then hits cleanupStaleState and can fail
     // silently on Android 16.
     bindTask(task, meta, copy.title, copy.reciterName);
   }
   for (const task of unknown) {
     void releaseNativeTask(task);
+  }
+  if (Platform.OS === "ios") {
+    // stop() cancel events must flush before enqueueLeftover start()s the same ids.
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
   }
 }
 

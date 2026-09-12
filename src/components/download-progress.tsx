@@ -1,3 +1,4 @@
+import { useChrome } from "@/hooks/use-chrome";
 import { useThemeColors } from "@/theme/use-theme-colors";
 import { Text, View, cn, ui } from "@/tw";
 
@@ -13,6 +14,7 @@ export function DownloadProgress({
   className?: string;
 }) {
   const colors = useThemeColors();
+  const { bodySmall, simpleMode } = useChrome();
   const clamped = Math.max(0, Math.min(100, Math.round(percent)));
   const label =
     done != null && total != null && total > 0
@@ -22,7 +24,11 @@ export function DownloadProgress({
   return (
     <View className={cn("min-w-16 items-center gap-1", className)}>
       <View
-        className={cn("h-1.5 w-full overflow-hidden rounded-full", ui.fillBorder)}
+        className={cn(
+          "w-full overflow-hidden rounded-full",
+          simpleMode ? "h-2.5" : "h-1.5",
+          ui.fillBorder,
+        )}
       >
         <View
           className="h-full rounded-full"
@@ -30,7 +36,9 @@ export function DownloadProgress({
           style={{ width: `${clamped}%`, backgroundColor: colors.accent }}
         />
       </View>
-      <Text className={cn("text-center text-xs", ui.muted)}>{label}</Text>
+      <Text className={cn("text-center font-semibold", bodySmall, ui.muted)}>
+        {label}
+      </Text>
     </View>
   );
 }

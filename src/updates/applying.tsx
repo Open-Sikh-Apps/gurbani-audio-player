@@ -86,14 +86,16 @@ function SplashChrome({
   overlay?: boolean;
   scheme: ColorSchemeName;
 }) {
-  const { body } = useChrome();
+  const { t } = useTranslation();
+  const { body, bodySmall, title } = useChrome();
   const splash = colorsFor(scheme);
+  const appTitle = t("home.title");
   const logoRadius =
     Platform.OS === "android" ? SPLASH_ANDROID_CORNER_RADIUS : 0;
   return (
     <View
       accessibilityRole="progressbar"
-      accessibilityLabel={message}
+      accessibilityLabel={`${appTitle}. ${message}. ${t("ota.pleaseWait")}`}
       className={overlay ? "absolute inset-0 z-60" : "flex-1"}
       style={{ backgroundColor: splash.bg }}
     >
@@ -119,6 +121,22 @@ function SplashChrome({
           />
         </View>
       </View>
+      {/* Sit above the pinned logo; a column stack would jump the icon off the native splash center. */}
+      <View
+        pointerEvents="none"
+        className="absolute inset-x-0 items-center px-8"
+        style={{
+          bottom: "50%",
+          marginBottom: SPLASH_IMAGE_WIDTH / 2 + 20,
+        }}
+      >
+        <Text
+          className={cn("text-center", title)}
+          style={{ color: splash.text }}
+        >
+          {appTitle}
+        </Text>
+      </View>
       <View
         className="absolute inset-x-0 items-center gap-4 px-8"
         style={{
@@ -127,9 +145,20 @@ function SplashChrome({
         }}
       >
         <ActivityIndicator size="large" color={splash.accent} />
-        <Text className={cn("text-center", body)} style={{ color: splash.text }}>
-          {message}
-        </Text>
+        <View className="items-center gap-1">
+          <Text
+            className={cn("text-center", body)}
+            style={{ color: splash.text }}
+          >
+            {message}
+          </Text>
+          <Text
+            className={cn("text-center", bodySmall)}
+            style={{ color: splash.textMuted }}
+          >
+            {t("ota.pleaseWait")}
+          </Text>
+        </View>
       </View>
     </View>
   );

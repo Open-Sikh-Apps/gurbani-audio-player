@@ -12,6 +12,8 @@ export const REMOTE_SKIP_SEC = 10;
 export const IGNORE_PROGRESS_MS = 1200;
 /** User pause rewinds so resume is not mid-word; do not overflow to the previous track. */
 export const PAUSE_REWIND_SEC = 2;
+/** Native skip-previous restarts the current item after this; keep in-app prev in sync. */
+export const SKIP_TO_PREVIOUS_THRESHOLD_SEC = 2;
 /** Android `drawable/` name for the media-session small icon (white silhouette). */
 export const ANDROID_NOTIFICATION_ICON = "notification_icon";
 

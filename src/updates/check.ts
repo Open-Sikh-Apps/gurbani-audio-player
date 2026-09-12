@@ -1,5 +1,7 @@
-import { Alert, Platform } from "react-native";
+import * as Application from "expo-application";
+import Constants from "expo-constants";
 import * as Updates from "expo-updates";
+import { Alert, Linking, Platform } from "react-native";
 
 import { reportOtaFetchFailure } from "@/crash/report";
 import {
@@ -9,12 +11,16 @@ import {
 } from "@/downloads";
 import i18n from "@/i18n";
 import { pausePlayback, usePlaybackStore } from "@/playback";
+import { usePreferencesStore } from "@/state/preferences-store";
 import { useOtaApplyingStore } from "@/updates/applying";
 import {
   isSameLaunchAsset,
   LAUNCH_HASH_EXTRA_PARAM,
   launchAssetHashFromManifest,
 } from "@/updates/launch-hash";
+
+/** App Store Connect Apple ID. Open store is offered on production iOS even before the public listing is live. */
+const IOS_APP_STORE_ID = "6809691052";
 
 /** One in-flight Worker check per JS lifetime so cold start and apply share a result. */
 let probePromise: Promise<boolean> | null = null;
@@ -153,11 +159,56 @@ export async function applyPendingAppUpdate(
     }
     return "busy";
   }
-  if (options.silentHeadsUp) {
+  // First install still has the wizard; Update ready would stack on top of it.
+  if (
+    options.silentHeadsUp &&
+    usePreferencesStore.getState().hasCompletedWizard
+  ) {
     await promptSilentApply();
   }
   const reloaded = await applyUpdate();
   return reloaded ? "applied" : "none";
+}
+
+function otaChannelName(): string | undefined {
+  const headers = Constants.expoConfig?.updates?.requestHeaders as
+    | Record<string, string>
+    | undefined;
+  const value = Updates.channel ?? headers?.["expo-channel-name"];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function storeListingUrl(): string | null {
+  // Preview / USB must not open the production listing.
+  if (Platform.OS === "web" || otaChannelName() !== "production") {
+    return null;
+  }
+  if (Platform.OS === "android") {
+    const id = Application.applicationId;
+    return id ? `https://play.google.com/store/apps/details?id=${id}` : null;
+  }
+  if (Platform.OS === "ios" && IOS_APP_STORE_ID.length > 0) {
+    return `https://apps.apple.com/app/id${IOS_APP_STORE_ID}`;
+  }
+  return null;
+}
+
+/** Settings Check only. Cold start must not offer the store. */
+function promptNoJsUpdate(): void {
+  const url = storeListingUrl();
+  if (!url) {
+    Alert.alert(i18n.t("ota.check"), i18n.t("ota.none"));
+    return;
+  }
+  Alert.alert(i18n.t("ota.check"), i18n.t("ota.storeBody"), [
+    { text: i18n.t("ota.cancel"), style: "cancel" },
+    {
+      text: i18n.t("ota.openStore"),
+      onPress: () => {
+        void Linking.openURL(url);
+      },
+    },
+  ]);
 }
 
 /** Settings tile: fresh check, then apply. No idle heads-up — they tapped Check. */
@@ -173,7 +224,7 @@ export async function checkForAppUpdate(fromSettings: boolean): Promise<void> {
     if (!pending) {
       probePromise = Promise.resolve(false);
       if (fromSettings) {
-        Alert.alert(i18n.t("ota.check"), i18n.t("ota.none"));
+        promptNoJsUpdate();
       }
       return;
     }

@@ -28,6 +28,7 @@ import {
   enqueueDownloads,
   fileKey,
   isCurrentlyPlayingTrack,
+  isTrackDownloadHeldForPlayback,
   isTrackDownloaded,
   isTrackDownloading,
   removeDownloadedTracks,
@@ -66,11 +67,20 @@ function fileInFlight(file: DownloadFile | undefined): boolean {
   return file?.status === "queued" || file?.status === "downloading";
 }
 
-function AlbumHeaderProgress({ albumId }: { albumId: string }) {
+function AlbumHeaderProgress({ albumId, downloaded }: { albumId: string, downloaded: boolean }) {
+  const { tabIcon } = useChrome();
+  const colors = useThemeColors();
   const batch = useDownloadStore((state) => state.batches[albumId]);
   if (!batch || batch.total === 0) {
-    return null;
+    return downloaded ? <View className="shrink-0">
+      <AppIcon
+        name="download-done"
+        size={tabIcon}
+        color={colors.accent}
+      />
+    </View> : null;
   }
+
   return (
     <View className="shrink-0">
       <DownloadProgress
@@ -112,10 +122,10 @@ function AlbumResumeButton({
   const resume =
     isCurrentAlbum && currentTrackId
       ? {
-          trackId: currentTrackId,
-          positionSec,
-          durationSec: liveDurationSec > 0 ? liveDurationSec : undefined,
-        }
+        trackId: currentTrackId,
+        positionSec,
+        durationSec: liveDurationSec > 0 ? liveDurationSec : undefined,
+      }
       : storedResume;
   const resumeTrack = resume
     ? (tracks.find((track) => track.id === resume.trackId) ??
@@ -126,10 +136,10 @@ function AlbumResumeButton({
   const resumeAt =
     resume && resumeTrack
       ? midTrackResumeSec(
-          resume.positionSec,
-          resume.durationSec ??
-            ("durationSec" in resumeTrack ? resumeTrack.durationSec : undefined),
-        )
+        resume.positionSec,
+        resume.durationSec ??
+        ("durationSec" in resumeTrack ? resumeTrack.durationSec : undefined),
+      )
       : null;
   const albumPlaying = isCurrentAlbum && playing;
   const albumEndedResume =
@@ -138,9 +148,9 @@ function AlbumResumeButton({
       resume,
       tracks[tracks.length - 1]?.id,
       resume.durationSec ??
-        (resumeTrack && "durationSec" in resumeTrack
-          ? resumeTrack.durationSec
-          : undefined),
+      (resumeTrack && "durationSec" in resumeTrack
+        ? resumeTrack.durationSec
+        : undefined),
       isCurrentAlbum && albumEnded,
     );
   if (!resumeTrack) {
@@ -223,6 +233,10 @@ function AlbumTrackRow({
   const url = remoteUrlOf(item);
   const key = fileKey(item.id, url);
   const file = useDownloadStore((state) => state.files[key]);
+  const trackProgress = useDownloadStore((state) => state.progress[item.id]);
+  const downloadHeld = usePlaybackStore((state) =>
+    isTrackDownloadHeldForPlayback(item.id, state),
+  );
   const active = usePlaybackStore(
     (state) =>
       state.session?.albumId === albumId && state.currentTrackId === item.id,
@@ -237,11 +251,33 @@ function AlbumTrackRow({
   const selectable = !downloaded && !downloading;
   const durationLabel =
     item.durationSec != null ? formatDuration(item.durationSec) : null;
-  const sublabel = downloading
-    ? durationLabel
-      ? `${t("download.downloading")} · ${durationLabel}`
-      : t("download.downloading")
-    : durationLabel;
+  let sublabel = durationLabel;
+  if (downloading) {
+    if (downloadHeld) {
+      sublabel = t("download.pausedWhilePlayingTrack");
+    } else if (file?.mode === "single") {
+      const percent =
+        trackProgress && trackProgress.bytesTotal > 0
+          ? Math.max(
+              0,
+              Math.min(
+                100,
+                Math.round(
+                  (trackProgress.bytesDownloaded / trackProgress.bytesTotal) *
+                    100,
+                ),
+              ),
+            )
+          : 0;
+      sublabel = durationLabel
+        ? `${percent}% · ${durationLabel}`
+        : `${percent}%`;
+    } else {
+      sublabel = durationLabel
+        ? `${t("download.downloading")} · ${durationLabel}`
+        : t("download.downloading");
+    }
+  }
   const titleLabel = resolveL10n(item.title, locale);
 
   return (
@@ -261,8 +297,8 @@ function AlbumTrackRow({
           selected: active,
         }}
         accessibilityLabel={
-          downloading
-            ? `${titleLabel}, ${t("download.downloading")}`
+          downloading && sublabel
+            ? `${titleLabel}, ${sublabel}`
             : titleLabel
         }
         className={cn("min-w-0 flex-1 px-4 py-4", hit)}
@@ -391,7 +427,7 @@ export function AlbumScreen() {
       return session;
     }
     return null;
-  }, [albumId, reciter, scripture, sehaj, session]);
+  }, [albumId, reciter, scripture, sehaj, sehaj ? null : session]);
 
   const heading = liveSession
     ? resolveL10n(liveSession.reciterName, locale)
@@ -452,11 +488,21 @@ export function AlbumScreen() {
   const inputs: DownloadTrackInput[] = tracks.map(toDownloadInput);
   const hasAnyDownload = useDownloadStore((state) =>
     tracks.some(
-      (track) =>
-        state.files[fileKey(track.id, remoteUrlOf(track))]?.status ===
-        "completed",
+      (track) => {
+        const currentStatus = state.files[fileKey(track.id, remoteUrlOf(track))]?.status;
+        return currentStatus === "completed" || currentStatus === "downloading" || currentStatus === "queued";
+      }
     ),
   );
+  const downloaded = useDownloadStore((state) => {
+    if (tracks.length === 0) {
+      return false;
+    }
+    return tracks.every(
+      (track: AlbumRow) =>
+        state.files[fileKey(track.id, track.url)]?.status === "completed",
+    );
+  });
 
   // `?trackId=` only scrolls (Now Playing album button). Do not playAlbum —
   // that restarted the current track from 0. Share/deeplink play can use a
@@ -531,8 +577,8 @@ export function AlbumScreen() {
 
   const sheetOptions: DownloadSheetOptions = {
     title: t("download.action"),
-    downloadAll: online ? t("download.all") : null,
-    select: online ? t("download.select") : null,
+    downloadAll: (online && !downloaded) ? t("download.all") : null,
+    select: (online && !downloaded) ? t("download.select") : null,
     removeAll: hasAnyDownload ? t("download.removeAll") : null,
     cancel: t("download.cancel"),
     onDownloadAll: () => {
@@ -621,7 +667,7 @@ export function AlbumScreen() {
                       <Text className={cn(ui.muted, text)}>{heading}</Text>
                     ) : null}
                   </View>
-                  <AlbumHeaderProgress albumId={albumId} />
+                  <AlbumHeaderProgress albumId={albumId} downloaded={downloaded} />
                 </View>
                 <AlbumResumeButton
                   albumId={albumId}

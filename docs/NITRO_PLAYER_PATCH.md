@@ -34,7 +34,7 @@ Native has no NetInfo. JS packs `httpOverflow:1|0` in the same config token (`al
 Settings chooses which pair is **primary** (default **±10**). Compact notification, lock screen, Bluetooth, and car follow that pair. The other pair is **secondary**: in-app always, and on Android the **expanded notification overflow**.
 
 - **Android** can split compact vs overflow. When primary is ±10, overflow prev/next are custom session actions so a headset can still seek without also remapping expanded skip. Media3 hides “next” on the last item — the patch keeps +10 available there when primary is seek.
-- **iOS** Control Center / lock screen: when primary is ±10, numbered skip-interval commands are enabled; next/prev are hidden so the icons match. When primary is track skip, next/prev skip tracks and the numbered buttons are hidden. iOS cannot split Control Center from Bluetooth.
+- **iOS** Control Center / lock screen: when primary is ±10, numbered skip-interval commands are enabled so the icons match; next/prev stay enabled so headset/car next-prev still seek ±10. When primary is track skip, next/prev skip tracks and the numbered buttons are hidden.
 
 Headset prev/next go through the **logical album queue**, not ExoPlayer’s windowed timeline (which often has the playing item at index 0).
 
@@ -64,9 +64,17 @@ The same config token can name a **drawable** (`notification_icon`). Prebuild co
 
 ### Android mediaPlayback foreground while buffering
 
-Media3 `isPlaying()` is false while buffering. Default `onTaskRemoved` then **pauses and stops** the service on recents-swipe during a rebuffer. `applyNotificationSmallIcon` also called `onUpdateNotification(session, false)`, which **stops FGS** on a live stream (NetInfo reconfigure, remote-primary change). A cached process still decoding a stream is then `am_kill`’d for CPU (OnePlus: `oom_adj=935`).
+Media3 `isPlaying()` is false while buffering. `applyNotificationSmallIcon` used to call `onUpdateNotification(session, false)`, which **stops FGS** on a live stream (NetInfo reconfigure, remote-primary change). A cached process still decoding a stream is then `am_kill`’d for CPU (OnePlus: `oom_adj=935`).
 
-The patch keeps `mediaPlayback` FGS while `playWhenReady` and state is `READY` or `BUFFERING`: `onUpdateNotification` ORs that in, icon refresh passes `true`, and `onTaskRemoved` returns without `super` when FGS is already up. After pause / end / error, Media3’s 10-minute FGS timeout is unchanged. Needs a new native Android build.
+The patch keeps `mediaPlayback` FGS while `playWhenReady` and state is `READY` or `BUFFERING`: `onUpdateNotification` ORs that in, and icon refresh passes `true`. Recents swipe / Close all **stop** playback (`onTaskRemoved`: `pauseAllPlayersAndStopSelf`).
+
+### iOS TimeJumped, overflow play, empty-queue replay
+
+Stock `AVPlayerItemTimeJumped` can emit the **pre-seek** time. Lock-screen previous-to-0 then left JS on the old position. The patch skips that notify when `isManuallySeeked` and emits the **requested** position from `seekInternal`’s completion.
+
+±10 leftover that skips to a neighbour then `seek`s can leave AVPlayer paused. After that hop, native `playInternal()`s if `intendedToPlay` is still true.
+
+Album end with `repeat: off` empties AVQueuePlayer. Lock-screen **play** rebuilds the last track at 0 (same as JS `engine.play()`). Error / empty-queue also clear `intendedToPlay` so `waitingToPlay` is not reported as buffering (stuck spinner at 0).
 
 ---
 

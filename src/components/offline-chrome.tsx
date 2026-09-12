@@ -16,7 +16,6 @@ export function OfflineBanner() {
   const { text } = useChrome();
   const insets = useSafeAreaInsets();
   const online = useIsOnline();
-  // Read files, not the cached flag — persist used to leave hasCompleted false until a later write.
   const hasDownloads = useDownloadStore((state) =>
     Object.values(state.files).some(
       (file) => file.status === "completed" || file.status === "orphan",

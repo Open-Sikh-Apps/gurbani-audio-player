@@ -60,12 +60,6 @@ export function MiniPlayer() {
               size={tabIcon}
               color={colors.accent}
             />
-          ) : buffering ? (
-            <AppIcon
-              name="hourglass-empty"
-              size={tabIcon}
-              color={colors.accent}
-            />
           ) : null}
           {fromDisk ? (
             <AppIcon
@@ -80,13 +74,14 @@ export function MiniPlayer() {
         </Text> : null}
       </Pressable>
       <IconButton
-        name={playing ? "pause" : albumEnded ? "replay" : "play-arrow"}
+        name={buffering ? "hourglass-empty" : playing ? "pause" : albumEnded ? "replay" : "play-arrow"}
         accessibilityLabel={
-          playing
-            ? t("player.pause")
-            : albumEnded
-              ? t("player.restart")
-              : t("player.play")
+          buffering ? t("player.buffering") :
+            playing
+              ? t("player.pause")
+              : albumEnded
+                ? t("player.restart")
+                : t("player.play")
         }
         size={tabIcon}
         color={colors.accent}

@@ -12,7 +12,7 @@ The Worker looks up `{channel}/{platform}/{runtimeVersion}/` only — a `1.0.2` 
 
 The launch bundle is stored as `{prefix}/launch/{sha256}.bin`, not `_expo/static/js/.../index.hbc`. Cloudflare treated that JS-looking path as JavaScript, cached a truncated body, and `fetchUpdateAsync` failed SHA-256. Purge often missed the phone’s PoP. A new content hash is a new cache key; `.bin` is on Cloudflare’s default cacheable list (same class as `.mp3`). `fileExtension` in the manifest stays `.hbc` so expo-updates still writes bytecode.
 
-Cold start: hide native splash immediately and show the JS spinner. Check starts as soon as NetInfo says online. Apply waits until MMKV and downloads are initialized. Idle apply shows a one-button heads-up first. Settings → Check for update skips that heads-up.
+Cold start: hide native splash immediately and show the JS spinner (`home.title` above the logo, then **Loading…** / **Updating…** and **Please wait**). Check starts as soon as NetInfo says online. Apply waits until MMKV and downloads are initialized. Idle apply shows a one-button heads-up first (returning users only — wizard-not-done skips it). Settings → Check for update skips that heads-up. Android notification remount (`SessionActivityTrampoline`) must **not** re-run catalogue refresh or OTA apply; `catalogueReady` keeps `Stack` mounted and only `restoreLastSession`s.
 
 ---
 
@@ -64,19 +64,19 @@ The channel is **baked into the binary** (`expo-channel-name`). `app.json` defau
 
 | Binary       | Profile      | Channel folder              | Publish                                      |
 | ------------ | ------------ | --------------------------- | -------------------------------------------- |
-| Sideload APK | `preview`    | `preview/android/1.0.3/`    | `npm run ota:publish`                        |
-| Play AAB     | `production` | `production/android/1.0.3/` | `OTA_CHANNEL=production npm run ota:publish` |
+| Sideload APK | `preview`    | `preview/android/1.0.6/`    | `npm run ota:publish`                        |
+| Play AAB     | `production` | `production/android/1.0.6/` | `OTA_CHANNEL=production npm run ota:publish` |
 
 
 Build the AAB from the same tree you publish. Version fields are **independent**:
 
-| Field | Today | Bump when |
+| Field | Today (`app.json`) | Bump when |
 |---|---|---|
 | `expo.version` | `1.0.0` | Store listing / marketing |
-| `android.versionCode` / `ios.buildNumber` | `1` | Every new binary uploaded to Play / App Store (`autoIncrement` is off — bump by hand) |
-| `runtimeVersion` | `1.0.3` | Android (or that platform’s) **native** surface changes. OTA folder is `{channel}/{platform}/{runtimeVersion}/` |
+| `android.versionCode` / `ios.buildNumber` | `5` / `3` | Every new binary uploaded to Play / App Store (`autoIncrement` is off — bump by hand) |
+| `runtimeVersion` | `1.0.6` | Android (or that platform’s) **native** surface changes. OTA folder is `{channel}/{platform}/{runtimeVersion}/` |
 
-They do not have to look the same. A Play upload can be `version` `1.0.0` + `versionCode` `2` + `runtimeVersion` `1.0.3`.
+They do not have to look the same. A Play upload can be `version` `1.0.0` + `versionCode` `5` + `runtimeVersion` `1.0.6`.
 
 Do **not** put `EXPO_PUBLIC_USE_MOCK_CATALOGUE=1` on a preview/production build — `app.config.ts` throws. Pages URLs come from `eas.json` env, not `.env`. Changing `EXPO_PUBLIC_CATALOGUE_BASE_URL` in `eas.json` **does** inlined into the next `expo export` / OTA JS. `ota:fingerprint-check` may still **fail** because `eas.json` is part of the native fingerprint hash (it can affect the Gradle env). That gate is not saying the URL cannot OTA — it is saying “this file also looks like native.” After an env-only `eas.json` edit, publish with `OTA_ALLOW_NATIVE_CHANGE=1` (or rebuild a binary if you also changed native). Metro `.env` never reaches `eas build --local`.
 
@@ -102,7 +102,7 @@ Edit `credentials.json` with the keystore and key passwords. `.gitignore` alread
 
 Do **not** `ota:publish` to `production` from the same tree as that AAB unless you intend old binaries to pick up that JS. Same-bytes publishes reuse the update id, so phones already running that Hermes skip. A **fresh** install of the AAB still applies once (embedded manifest has no launch hash). Publish production OTA when there is a JS change you want on phones that already installed an older AAB. The first such publish also stores the Android fingerprint baseline for that folder.
 
-Later iOS: keep `runtimeVersion` the same as the shipping Android binary (`1.0.3` today). Android phones only read `production/android/1.0.3/` — they do not see `production/ios/…`. Ship iOS JS with `OTA_CHANNEL=production OTA_PLATFORMS=ios`. Do not bump the top-level `runtimeVersion` in `app.json` for iOS-only native; that would make later default publishes miss existing Android binaries. `expo.version` can stay `1.0.0`; iOS `buildNumber` is separate from Android `versionCode`.
+Later iOS: keep `runtimeVersion` the same as the shipping Android binary (`1.0.6` today). Android phones only read `production/android/1.0.6/` — they do not see `production/ios/…`. Ship iOS JS with `OTA_CHANNEL=production OTA_PLATFORMS=ios`. Do not bump the top-level `runtimeVersion` in `app.json` for iOS-only native; that would make later default publishes miss existing Android binaries. `expo.version` can stay `1.0.0`; iOS `buildNumber` is separate from Android `versionCode`.
 
 iOS has no `allowBackup: false`. `plugins/with-ios-exclude-from-backup.js` marks `Documents/mmkv`, `Documents/audio`, and Application Support `.expo-internal` as excluded from iCloud/Finder backup (same idea as Android Auto Backup off). `ios.usesIcloudStorage` is false. Delete+reinstall still wipes MMKV; native Google/Firebase Keychain is cleared when the wizard has not been completed (`src/native/ios-fresh-install.ts`). Needs a new iOS prebuild/binary.
 
@@ -180,7 +180,9 @@ flowchart TB
 
 
 
-Idle heads-up is cold start only (and a late probe that finishes after Home). Settings → Check for update does not show it. The dialog does not survive `reloadAsync`; it only warns before fetch.
+Idle heads-up is cold start only (and a late probe that finishes after Home). Settings → Check for update does not show it. The dialog does not survive `reloadAsync`; it only warns before fetch. First install (wizard not done) skips it — overlay only.
+
+Android expanded-shade tap remounts `MainActivity`. JS `catalogueReady` skips the splash, catalogue refresh, and OTA apply on that remount; `restoreLastSession` still runs if the native player died with the Activity.
 
 Icons, Firebase, Sentry native, Google Sign-in, and `expo-updates` itself never OTA. Those need a new APK/AAB.
 
@@ -190,7 +192,7 @@ Icons, Firebase, Sentry native, Google Sign-in, and `expo-updates` itself never 
 
 ## Apply behaviour
 
-- Idle (nothing playing, no in-flight downloads): one OK dialog on the JS splash (“update ready, please wait”), then spinner, fetch, reload. Settings skip that dialog.
+- Idle (nothing playing, no in-flight downloads): one OK dialog on the JS splash (“update ready, please wait”), then spinner, fetch, reload. Settings skip that dialog. **First install** (wizard not done) also skips it — overlay only, so Update ready does not sit on the wizard.
 - Playing or downloading: one confirm (stops playback/downloads; screen may go blank), then pause, cancel downloads, fetch, reload.
 - `Updates.reloadAsync()` tears down JS. Overlay and JS splash cannot cover the native blank after that.
 
@@ -204,7 +206,7 @@ Play Core / App Store lookup is **not** in this binary. Scraping store pages wou
 
 Settings → Check for update stays **OTA first**. Cold start never offers the store.
 
-When the Worker check succeeds and there is **no** JS update: one dialog. Copy must not say a binary is waiting. They already have the latest in-app update; a newer APK/AAB shows as **Update** in Play / App Store only if that store has actually released it to them (country + staged rollout). They may just see **Open**. Buttons: Open store / Not now. The listing is the eligibility check.
+When the Worker check succeeds and there is **no** JS update: one dialog **from Settings → Check for update only**. Copy must not say a binary is waiting. They already have the latest in-app update; a newer APK/AAB shows as **Update** in Play / App Store only if that store has actually released it to them (country + staged rollout). They may just see **Open**. Buttons: Open store / Not now. The listing is the eligibility check. Android uses `Application.applicationId`. iOS uses `IOS_APP_STORE_ID` (`src/updates/check.ts`, App Store Connect Apple ID `6809691052`). The public page may 404 until the app is listed; TestFlight still offers Open store.
 
 **Failed** (network, Worker) is not **none** — do not send them to the store as if they are current. Skip the offer when `Updates.isEnabled` is false, and until the app is actually listed. Preview sideloads must not open the production listing — they are a different OTA channel.
 
@@ -220,12 +222,12 @@ Opening the store does not need the OTA stop-playback / cancel-downloads path. T
 
 An AAB is not sideloadable (`adb install` wants an APK). Day-to-day device testing stays the preview APK (`npm run build:android:preview`, channel `preview`). To smoke-test the Play AAB on a phone, use Play Console **internal app sharing** (Play-signed splits) or `bundletool` (upload-key signed — uninstall before a later Play install).
 
-Internal sharing of the production AAB is the **same** channel and `runtimeVersion` as store users: `production/android/1.0.3/`. `checkAutomatically` is `NEVER`, so a matching OTA still only applies on cold start or Settings → Check for update.
+Internal sharing of the production AAB is the **same** channel and `runtimeVersion` as store users: `production/android/1.0.6/`. `checkAutomatically` is `NEVER`, so a matching OTA still only applies on cold start or Settings → Check for update.
 
 If that AAB’s **JS** is wrong:
 
-- Do **not** bump `runtimeVersion`. That string stays `1.0.3` until Android **native** changes (icons, splash, native modules). A bump only moves **new** binaries to a new folder; phones that already installed `1.0.3` keep asking `1.0.3`.
-- Do **not** `OTA_CHANNEL=production npm run ota:publish` to patch testers. That folder is shared with every production-channel `1.0.3` install, including Play if that AAB is already in Production.
+- Do **not** bump `runtimeVersion`. That string stays `1.0.6` until Android **native** changes (icons, splash, native modules). A bump only moves **new** binaries to a new folder; phones that already installed `1.0.6` keep asking `1.0.6`.
+- Do **not** `OTA_CHANNEL=production npm run ota:publish` to patch testers. That folder is shared with every production-channel `1.0.6` install, including Play if that AAB is already in Production.
 - Fix JS, rebuild the AAB, bump `versionCode`, upload sharing (or Production) again. Testers get the new **embedded** JS.
 
-If you already published a **bad** production OTA: republish good JS to the **same** folder (`production/android/1.0.3/`). That is the rollback. Deleting the R2 manifest only stops new downloads; phones that already applied the bad bundle keep it until a good publish.
+If you already published a **bad** production OTA: republish good JS to the **same** folder (`production/android/1.0.6/`). That is the rollback. Deleting the R2 manifest only stops new downloads; phones that already applied the bad bundle keep it until a good publish.

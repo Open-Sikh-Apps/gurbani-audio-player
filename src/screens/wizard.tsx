@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
+import { Linking, Platform } from "react-native";
 
 import { requestDownloadNotificationPermission } from "@/downloads";
 import { AppToastSlot } from "@/feedback/toast";
@@ -13,13 +14,18 @@ import { Pressable, ScrollView, Text, View, cn, ui } from "@/tw";
 
 export function WizardScreen() {
   const { t } = useTranslation();
-  const { hit, text, title, body, simpleMode } = useChrome();
+  const { hit, text, title, body, bodySmall, simpleMode } = useChrome();
   const locale = useResolvedLocale();
   const setLocale = usePreferencesStore((state) => state.setLocale);
   const setSimpleMode = usePreferencesStore((state) => state.setSimpleMode);
   const completeWizard = usePreferencesStore((state) => state.completeWizard);
-  const [step, setStep] = useState<0 | 1 | 2>(0);
+  // Android adds a battery step after notifications; iOS finishes at step 2.
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
   const bottomPad = useSafeBottomPad();
+
+  const finishWizard = () => {
+    completeWizard({ locale, simpleMode });
+  };
 
   return (
     <View className="relative flex-1">
@@ -148,7 +154,7 @@ export function WizardScreen() {
             </Text>
           </Pressable>
         </View>
-      ) : (
+      ) : step === 2 ? (
         <View className="flex-1 justify-center gap-6">
           <View className="gap-2">
             <Text className={cn(ui.text, title)}>
@@ -167,17 +173,69 @@ export function WizardScreen() {
             )}
             onPress={() => {
               void (async () => {
-                // Playback shade + download progress both need a grant; do not complete until both run.
+                // Playback shade + download progress both need a grant; do not leave this step until both run.
                 await requestDownloadNotificationPermission();
                 await requestNotificationPermission();
-                completeWizard({ locale, simpleMode });
+                if (Platform.OS === "android") {
+                  setStep(3);
+                  return;
+                }
+                finishWizard();
               })();
             }}
           >
             <Text className={cn("font-semibold", ui.accentFg, text)}>
-              {t("wizard.done")}
+              {Platform.OS === "android"
+                ? t("wizard.continue")
+                : t("wizard.done")}
             </Text>
           </Pressable>
+        </View>
+      ) : (
+        <View className="flex-1 justify-center gap-6">
+          <View className="gap-2">
+            <Text className={cn(ui.text, title)}>
+              {t("settings.unrestrictedBattery")}
+            </Text>
+            <Text className={cn(ui.muted, body)}>
+              {t("settings.unrestrictedBatteryHint")}
+            </Text>
+            <Text className={cn(ui.muted, bodySmall)}>
+              {t("wizard.batteryLaterInSettings")}
+            </Text>
+          </View>
+          <View className="gap-3">
+            <Pressable
+              accessibilityRole="button"
+              className={cn(
+                "items-center justify-center rounded-2xl px-4",
+                hit,
+                ui.fillAccent,
+              )}
+              // OEM battery pages are not reliably deep-linkable; open app settings instead.
+              onPress={() => {
+                void Linking.openSettings();
+                finishWizard();
+              }}
+            >
+              <Text className={cn("font-semibold", ui.accentFg, text)}>
+                {t("wizard.batteryOpenSettings")}
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              className={cn(
+                "items-center justify-center rounded-2xl border px-4",
+                hit,
+                ui.unselected,
+              )}
+              onPress={finishWizard}
+            >
+              <Text className={cn("font-semibold", ui.text, text)}>
+                {t("wizard.skip")}
+              </Text>
+            </Pressable>
+          </View>
         </View>
       )}
     </ScrollView>

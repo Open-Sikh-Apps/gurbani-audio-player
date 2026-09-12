@@ -83,18 +83,24 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         },
       ],
     },
-    ios: {
-      ...config.ios,
-      icon: {
-        light: "./assets/icon-light.png",
-        dark: "./assets/icon-dark.png",
-      },
-      bundleIdentifier: process.env.APP_VARIANT === "development" ? "com.opensikhapps.gurbaniaudioplayer.dev" : config.ios?.bundleIdentifier ?? "com.opensikhapps.gurbaniaudioplayer",
-      googleServicesFile: process.env.APP_VARIANT === "development" ? "./GoogleService-Info-dev.plist" : config.ios?.googleServicesFile ?? "./GoogleService-Info.plist",
-      usesIcloudStorage: false,
-      // associatedDomains: process.env.APP_VARIANT === "development" ? ["applinks:gurbaniaudioplayer-dev.opensikhapps.com"] : config.ios?.associatedDomains ?? [
-      //   "applinks:gurbaniaudioplayer.opensikhapps.com",
-      // ],
-    },
+    ios: (() => {
+      const { associatedDomains: storeAssociatedDomains, ...iosRest } =
+        config.ios ?? {};
+      return {
+        ...iosRest,
+        bundleIdentifier: process.env.APP_VARIANT === "development" ? "com.opensikhapps.gurbaniaudioplayer.dev" : config.ios?.bundleIdentifier ?? "com.opensikhapps.gurbaniaudioplayer",
+        googleServicesFile: process.env.APP_VARIANT === "development" ? "./GoogleService-Info-dev.plist" : config.ios?.googleServicesFile ?? "./GoogleService-Info.plist",
+        usesIcloudStorage: false,
+        // Personal Team / .dev profiles cannot sign Associated Domains. Omit
+        // the key entirely — `undefined` does not override app.json.
+        ...(process.env.APP_VARIANT === "development"
+          ? {}
+          : {
+            associatedDomains: storeAssociatedDomains ?? [
+              "applinks:gurbaniaudioplayer.opensikhapps.com",
+            ],
+          }),
+      };
+    })(),
   };
 };

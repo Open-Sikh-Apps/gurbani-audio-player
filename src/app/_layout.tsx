@@ -120,6 +120,11 @@ export default function RootLayout() {
     if (!fontsLoaded && !fontError) {
       return;
     }
+    if (catalogueReady) {
+      // Native player can die with the Activity; this is a no-op if the session is still there.
+      void restoreLastSession();
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {

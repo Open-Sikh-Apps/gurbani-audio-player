@@ -1,7 +1,9 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
+import { Platform } from "react-native";
 
 import { downloadsStateStorage } from "@/state/mmkv";
+import { usePlaybackStore } from "@/playback/status-store";
 import {
   fileKey,
   type AlbumBatchSnapshot,
@@ -17,7 +19,6 @@ type DownloadsState = {
   batches: Record<string, AlbumBatchSnapshot>;
   byTrackId: Record<string, string[]>;
   inFlightByAlbum: Record<string, string[]>;
-  hasCompleted: boolean;
   snackbar: DownloadSnackbar | null;
   upsertFile: (file: DownloadFile) => void;
   upsertFiles: (files: DownloadFile[]) => void;
@@ -30,6 +31,36 @@ type DownloadsState = {
 };
 
 let snackbarSeq = 0;
+let deferredDownloadsPersist: { name: string; value: string } | null = null;
+
+const playbackAwareDownloadsStorage: StateStorage = {
+  getItem: (name) => downloadsStateStorage.getItem(name),
+  removeItem: (name) => downloadsStateStorage.removeItem(name),
+  setItem: (name, value) => {
+    // iOS: serializing the whole files map to MMKV on every complete starved
+    // the UI while AVPlayer was live (scrubber froze ~10s in, JS still finishing jobs).
+    if (Platform.OS === "ios") {
+      const status = usePlaybackStore.getState();
+      if (status.playing || status.buffering) {
+        deferredDownloadsPersist = { name, value };
+        return;
+      }
+    }
+    downloadsStateStorage.setItem(name, value);
+  },
+};
+
+/** Call when playback is idle so deferred MMKV writes land. Disk files are already there. */
+export function flushDeferredDownloadsPersist(): void {
+  if (!deferredDownloadsPersist) {
+    return;
+  }
+  downloadsStateStorage.setItem(
+    deferredDownloadsPersist.name,
+    deferredDownloadsPersist.value,
+  );
+  deferredDownloadsPersist = null;
+}
 
 function isInFlight(status: DownloadStatus): boolean {
   return status === "queued" || status === "downloading";
@@ -42,11 +73,10 @@ function isKeptOnDisk(status: DownloadStatus): boolean {
 // Rebuild on each files write so byTrackId / inFlightByAlbum stay in lockstep with `files`.
 function indexesFromFiles(files: Record<string, DownloadFile>): Pick<
   DownloadsState,
-  "byTrackId" | "inFlightByAlbum" | "hasCompleted"
+  "byTrackId" | "inFlightByAlbum"
 > {
   const byTrackId: Record<string, string[]> = {};
   const inFlightByAlbum: Record<string, string[]> = {};
-  let hasCompleted = false;
   for (const [key, file] of Object.entries(files)) {
     const trackKeys = byTrackId[file.trackId];
     if (trackKeys) {
@@ -62,11 +92,8 @@ function indexesFromFiles(files: Record<string, DownloadFile>): Pick<
         inFlightByAlbum[file.albumId] = [key];
       }
     }
-    if (isKeptOnDisk(file.status)) {
-      hasCompleted = true;
-    }
   }
-  return { byTrackId, inFlightByAlbum, hasCompleted };
+  return { byTrackId, inFlightByAlbum };
 }
 
 // Header reads `batches` from the store. Rebuild from files on hydrate so a
@@ -151,7 +178,6 @@ export const useDownloadStore = create<DownloadsState>()(
       batches: {},
       byTrackId: {},
       inFlightByAlbum: {},
-      hasCompleted: false,
       snackbar: null,
       upsertFile: (file) => {
         const key = fileKey(file.trackId, file.remoteUrl);
@@ -173,11 +199,27 @@ export const useDownloadStore = create<DownloadsState>()(
         if (!current) {
           return;
         }
-        const files = {
-          ...get().files,
-          [key]: { ...current, ...patch, updatedAt: Date.now() },
-        };
-        set({ files, ...indexesFromFiles(files) });
+        const next = { ...current, ...patch, updatedAt: Date.now() };
+        const files = { ...get().files, [key]: next };
+        if (current.status === next.status) {
+          set({ files });
+          return;
+        }
+        const inFlightByAlbum = { ...get().inFlightByAlbum };
+        const albumId = next.albumId;
+        const without = (inFlightByAlbum[albumId] ?? []).filter((item) => item !== key);
+        if (isInFlight(next.status)) {
+          inFlightByAlbum[albumId] = [...without, key];
+        } else if (without.length > 0) {
+          inFlightByAlbum[albumId] = without;
+        } else {
+          delete inFlightByAlbum[albumId];
+        }
+        set({
+          files,
+          byTrackId: get().byTrackId,
+          inFlightByAlbum,
+        });
       },
       removeFile: (key) => {
         const current = get().files[key];
@@ -235,12 +277,12 @@ export const useDownloadStore = create<DownloadsState>()(
     }),
     {
       name: "downloads",
-      storage: createJSONStorage(() => downloadsStateStorage),
+      storage: createJSONStorage(() => playbackAwareDownloadsStorage),
       // Progress and batches are derived. Persisting them would fight the engine after a swipe-kill.
       partialize: (state) => ({ files: state.files }),
       merge: (persisted, current) => {
         const files = asPersistedFiles(persisted, current.files);
-        // Indexes must land in the same replace-merge as `files` or the banner reads hasCompleted: false.
+        // Indexes must land in the same replace-merge as `files`.
         return {
           ...current,
           files,
@@ -344,16 +386,6 @@ export function albumHasDownloads(
   return tracks.some(
     (track) => files[fileKey(track.id, track.url)]?.status === "completed",
   );
-}
-
-export function hasCompletedDownloads(
-  files: Record<string, DownloadFile> = useDownloadStore.getState().files,
-): boolean {
-  if (files === useDownloadStore.getState().files) {
-    // Cached flag so album rows do not scan every file on each render.
-    return useDownloadStore.getState().hasCompleted;
-  }
-  return Object.values(files).some((file) => isKeptOnDisk(file.status));
 }
 
 export function inFlightFilesForAlbum(albumId: string): DownloadFile[] {

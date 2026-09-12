@@ -43,7 +43,7 @@ export type AlbumBatchSnapshot = {
 
 export type DownloadSnackbar = {
   id: number;
-  kind: "startedTrack" | "startedTracks" | "addedTracks";
+  kind: "startedTrack" | "startedTracks" | "addedTracks" | "pausedForPlayback";
   count: number;
 };
 

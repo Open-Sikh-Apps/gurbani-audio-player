@@ -87,8 +87,10 @@
     "ota:publish": "tsx scripts/publish-update.ts",
     "ota:fingerprint-check": "tsx scripts/publish-update.ts --fingerprint-check",
     "test:updates": "tsx --test src/updates/launch-hash.test.ts",
-    "build:android:preview": "unset APP_VARIANT && eas build --profile preview --platform android --local",
+    "build:android:preview": "unset APP_VARIANT && eas build --profile preview --platform android --local --output ./build-android-preview.apk",
     "build:android:production": "unset APP_VARIANT && eas build --profile production --platform android --local",
+    "build:ios:production": "unset APP_VARIANT && eas build --profile production --platform ios --local --output ./build-ios.ipa",
+    "clean:nitro-player:ds-store": "find node_modules/react-native-nitro-player -name .DS_Store -delete",
     "patch:nitro-player": "rm -rf node_modules/react-native-nitro-player/android/.cxx node_modules/react-native-nitro-player/android/build && patch-package react-native-nitro-player --exclude 'android/\\.cxx|android/build'",
     "cleanup-cmake-error-nitro-player": "rm -rf node_modules/react-native-nitro-player/android/.cxx && rm -rf android/.gradle &&rm -rf ~/.gradle/caches/build-cache-*",
     "cleanup-ds-store-gradle-cache": "find ~/.gradle/caches -name '.DS_Store' -delete"

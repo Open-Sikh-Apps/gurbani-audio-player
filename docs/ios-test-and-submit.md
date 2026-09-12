@@ -39,7 +39,7 @@ The paid program is required only when you need **distribution**:
 
 Enrol when the iPad USB soak is clean and you are ready to make a TestFlight IPA in the next few days. Approval is often 24–48 hours, so start the form then — not months earlier, and not the night you want to submit.
 
-If `npm run ios` fails signing because of Associated Domains (this app declares `applinks:gurbaniaudioplayer.opensikhapps.com`), that entitlement is the usual culprit on a Personal Team. For free-tier USB testing, drop `associatedDomains` from the iOS config for that run, or expect Universal Links to wait until the paid binary. Do not spend a year of membership just to prove HTTPS links.
+If `npm run ios` fails signing because of Associated Domains (this app declares `applinks:gurbaniaudioplayer.opensikhapps.com` for store/TestFlight), that entitlement is the usual culprit on a Personal Team. USB `APP_VARIANT=development` already **omits** `associatedDomains` in `app.config.ts` — do not strip it by hand. Universal Links wait until the paid binary. Do not spend a year of membership just to prove HTTPS links.
 
 ---
 
@@ -76,7 +76,7 @@ Apple reviewers almost always open the app on an iPhone. Simulator covers layout
 **Paid (enrol only when the next steps are imminent)**
 
 1. Apple Developer Program + App Store Connect app record.
-2. Local distribution cert + App Store profile in `credentials.json`. One-time `ios.buildNumber` + export-compliance flag.
+2. Local distribution cert + App Store profile in `credentials.json`. Bump `ios.buildNumber` for each IPA (`usesNonExemptEncryption` is already set).
 3. Local **production IPA** → **TestFlight on the iPad only**. Confirm the store-signed binary (Universal Links, OTA, delete+reinstall).
 4. App Store Connect listing (description, privacy, 6.9" + 13" shots).
 5. **Then** invite the relative to the **same** TestFlight build. iPhone-only checks.
@@ -111,7 +111,7 @@ Skip App Store Connect and developer.apple.com/programs until section 6.
 
 ## 2. Firebase / Google (before the first native iOS compile)
 
-`app.config.ts` expects `./GoogleService-Info.plist` (gitignored, same idea as `google-services.json`). Needed whether or not you have paid Apple.
+`app.config.ts` expects `./GoogleService-Info.plist` for store/TestFlight and `./GoogleService-Info-dev.plist` for USB `APP_VARIANT=development` (both gitignored, same idea as `google-services.json` / `google-services-dev.json`). Needed whether or not you have paid Apple.
 
 1. Firebase Console → same project as Android → **Add app → iOS**, bundle ID `com.opensikhapps.gurbaniaudioplayer`. Drop the plist in the project root.
 2. Google Cloud Console → OAuth client of type **iOS** with that bundle ID.
@@ -190,7 +190,7 @@ Run this on the USB build now. Re-run the store-signed subset after section 8.
 1. **Install / identity**
 
 - [ ] x(dark mode icon needs Testflight) Launcher icon and splash (light + dark).
-- [x] Cold start: native splash, then JS spinner. No Google / Firebase picker.
+- [x] Cold start: native splash, then JS spinner (app title, **Loading…**, **Please wait**). No Google / Firebase picker.
 - [x] Catalogue from Pages. Home is sehaj paath by scripture, then reciter collections.
 
 **Delete + reinstall** (native Keychain / backup exclusion — not OTA)
@@ -202,27 +202,28 @@ On USB you reinstall with `npm run ios`. On TestFlight, delete and install that 
 
 **Playback**
 
-- [x] Play, pause, prev, next, ±10 in-app.
-- [x] (fixed) Lock screen + Control Center follow **Lock screen and headset buttons**. On iOS, remapping next/prev for a headset also remaps Control Center — see [NITRO_PLAYER_PATCH.md](./NITRO_PLAYER_PATCH.md).
+- [x] Play, pause, prev, next, ±10 in-app. In-app **Previous** after ~2s restarts the current track.
+- [x] (fixed) Lock screen + Control Center follow **Lock screen and headset buttons**. When primary is ±10, iOS shows numbered skip-interval commands **and** keeps next/prev enabled so a headset still seeks ±10 — see [NITRO_PLAYER_PATCH.md](./NITRO_PLAYER_PATCH.md).
 - [x] Background: lock the iPad, audio keeps going; unlock, position is sane.
 - [x] Album ends on the last track; does not continue into another album.
 - [x] Pause rewinds ~2s. x End of album / y end of track must not rewind-loop.
-- [ ] x (need production build/Testflight) Keep screen on while playing or buffering.
-- [x] Wi‑Fi toggle / airplane: downloaded album plays offline; undownloaded rows do not start a stream.
+- [x] (need production build/Testflight) Keep screen on while playing or buffering.
+- [ ] Wi‑Fi toggle / airplane: downloaded album plays offline; undownloaded rows do not start a stream.
 
 This iPad is **Wi‑Fi only**, so do not try to prove cellular-download policy here.
 
 **Downloads, helpers, settings**
 
 - [x] Download all / one track; progress notifications; downloaded icons.
-- [x] y Bookmarks, y History,  y sleep timer, y read along (disabled offline).
+- [x] **Play while a batch is running (iOS):** start Download all on an album still on CDN, play a streaming row that is not among the last few undownloaded tracks. Stay on Now Playing ≥20s: scrubber/Back/pause work. Shade **Downloading…** not a stuck count. iOS downloads stay **1-wide** even when paused. Lock while playing: unheld leftover continues. Pause → lock → play from lock screen: UI live after unlock. Force-quit while playing, reopen: leftovers continue. Kill + wifi-on must not crash. Full steps: [manual-test-plan.md](./manual-test-plan.md) §4.
+- [x] y Bookmarks,  y History,  y sleep timer, y read along (disabled offline).
 - [x] Theme, language, Simple mode.
-- [x] Give feedback mail / x copy fallback.
+- [x] Give feedback mail / copy fallback.
 
 **Share / Universal Links** (TestFlight / paid only)
 
 - [ ] Native share sheet (USB can do the sheet; HTTPS applinks wait for paid).
-- [ ] Opening `https://gurbaniaudioplayer.opensikhapps.com/a/…` plays that album/track. Needs Associated Domains + a valid `apple-app-site-association` on that host.
+- [ ] Opening `https://gurbaniaudioplayer.opensikhapps.com/a/…` lands on that album under Home (Back has a screen under the link). `/t/{trackId}` and `?trackId=` **scroll** to the row — they do **not** auto-play. Needs Associated Domains + a valid `apple-app-site-association` on that host.
 
 **OTA** (TestFlight production binary, after a publish to `production/ios/{runtimeVersion}/`)
 
@@ -292,23 +293,12 @@ Extend `credentials.json` (never commit it):
 
 TestFlight / store use the **App Store** profile, not a device UDID list. The relative’s UDID is never required.
 
-Before the first store IPA (not done in the repo yet):
+Already in `app.json` (bump by hand for every new IPA):
 
-1. Add `ios.buildNumber` in `app.json`. Start at `"1"`. Independent of Android `versionCode` (`4` today). `autoIncrement` is off — bump by hand for every new IPA.
-2. Skip TestFlight “Missing Compliance” on every upload:
-
-```json
-"ios": {
-  "config": {
-    "usesNonExemptEncryption": false
-  }
-}
-```
-
-Set `false` only if the app uses ordinary HTTPS (no custom crypto).
-
-1. Keep `runtimeVersion` at the shipping Android value (`1.0.5` in `app.json` now). iOS OTA lives in `production/ios/{runtimeVersion}/`. Bumping the top-level `runtimeVersion` for an iOS-only first binary would make Play users miss default Android OTAs. See [ota-updates.md](./ota-updates.md).
-2. Confirm `GoogleService-Info.plist` is on disk before `eas build`. Restore `associatedDomains` if you stripped it for Personal Team.
+1. `ios.buildNumber` is `"3"` today. Independent of Android `versionCode` (`5` today). `autoIncrement` is off.
+2. `ios.config.usesNonExemptEncryption` is `false` (ordinary HTTPS, no custom crypto) so TestFlight skips “Missing Compliance.”
+3. Keep `runtimeVersion` at the shipping Android value (`1.0.6` in `app.json` now). iOS OTA lives in `production/ios/{runtimeVersion}/`. Bumping the top-level `runtimeVersion` for an iOS-only first binary would make Play users miss default Android OTAs. See [ota-updates.md](./ota-updates.md).
+4. Confirm `GoogleService-Info.plist` is on disk before `eas build`. USB `.dev` already omits `associatedDomains`; production IPA keeps `applinks:gurbaniaudioplayer.opensikhapps.com`.
 
 ---
 
@@ -320,8 +310,10 @@ Store-like binary. Catalogue URLs come from `eas.json` production env. Mock cata
 
 ```bash
 unset APP_VARIANT
-eas build --profile production --platform ios --local --output ./build-ios.ipa
+npm run build:ios:production
 ```
+
+(`package.json` `build:ios:production` is `eas build --profile production --platform ios --local --output ./build-ios.ipa`. `.gitignore` already ignores `build-ios.ipa`.)
 
 First iOS local build is slow. Then upload (compile already happened on this Mac):
 
@@ -403,7 +395,7 @@ If you must rebuild after this, he will have to install again. That is why this 
 **Headset / lock screen (real iPhone chrome)**
 
 - [ ] Wired or Bluetooth headset: play/pause and the mapped skip or ±10 match **Lock screen and headset buttons**.
-- [ ] iPhone Control Center and lock screen Now Playing: same mapping. iOS cannot split headset skip from Control Center.
+- [ ] iPhone Control Center and lock screen Now Playing: same mapping. When primary is ±10, numbered ±10 **and** next/prev stay on (headset/car next-prev still seek ±10).
 - [ ] Compact Now Playing / mini player: nothing clipped under Dynamic Island / home indicator.
 
 **Sanity (short)**
@@ -443,10 +435,10 @@ npm run ios
 
 # Paid: store IPA on this Mac
 unset APP_VARIANT
-eas build --profile production --platform ios --local --output ./build-ios.ipa
+npm run build:ios:production
 
 # Paid: upload that IPA
 eas submit --platform ios --path ./build-ios.ipa --profile production
 ```
 
-There are no `build:ios:*` npm scripts yet; Android has `build:android:preview` / `build:android:production`.
+Android still has `build:android:preview` / `build:android:production`. iOS production is `build:ios:production` (`./build-ios.ipa`).

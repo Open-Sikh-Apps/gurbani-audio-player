@@ -107,6 +107,12 @@ function readAppJsonExpo(): {
       ios: { bundleIdentifier: expo?.ios?.bundleIdentifier },
       android: { package: expo?.android?.package },
       extra: expo?.extra,
+      // JS reads channel from expoConfig after apply; native still sends the binary header.
+      updates: {
+        requestHeaders: {
+          "expo-channel-name": CHANNEL,
+        },
+      },
     },
   };
 }

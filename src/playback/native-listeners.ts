@@ -1,9 +1,9 @@
-import { TrackPlayer } from "react-native-nitro-player";
+import { Reason, TrackPlayer, TrackPlayerState } from "react-native-nitro-player";
 
 export type NativePlayerListenerHandlers = {
   shouldIgnoreNative: () => boolean;
   onTrackChange: () => void;
-  onPlaybackStateChange: (state: string, reason?: string) => void;
+  onPlaybackStateChange: (state: TrackPlayerState, reason?: Reason) => void;
   onProgress: (position: number, duration: number) => void;
   onSeek: (position: number, duration: number) => void;
 };
