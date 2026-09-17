@@ -14,7 +14,7 @@ Phase 6 Cloud sync and Phase 7 share/App Links **JS** are not in this binary. Na
 - [x] Cold start: native splash is brief, then a **JS spinner** (app title, **Loading…**, **Please wait**). No Google account picker, no sign-in sheet, no Firestore prompt.
 - [x] If an OTA is waiting and nothing is playing: spinner, then **Update ready** dialog (OK only), then “Updating…”, then a possible short blank, then the app again. (except playing check). **First install** (wizard not done) skips Update ready — overlay only.
 - [x] Status-bar / media notification small icon is the Asset Studio glyph (`ਗੁ`), not the old chevron.
-- [x] Catalogue loads from Pages (not mock). Home lists sehaj paath by scripture, then reciter collections. No Gursikh portraits.
+- [x] Catalogue loads from Pages (not mock). Home lists sehaj paath by scripture, then reciter collections.
 
 **Fresh install (clear app data or new device):**
 

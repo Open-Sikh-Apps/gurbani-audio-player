@@ -1,7 +1,7 @@
 Waheguru Ji Ka Khalsa
 Waheguru Ji Ki Fateh!
 
-Original product vision (pre-V1). For what shipped, follow `docs/ROADMAP.md` and `docs/manual-test-plan.md`. Home lists sehaj paath by scripture, then reciter-named collections — not a Gursikh portrait grid.
+Original product vision (pre-V1). For what shipped, follow `docs/ROADMAP.md` and `docs/manual-test-plan.md`. Home lists sehaj paath by scripture, then reciter-named collections.
 
 App name:
 Gurbani Audio Player

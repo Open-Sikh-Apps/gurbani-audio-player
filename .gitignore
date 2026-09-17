@@ -66,3 +66,7 @@ dist-update/
 
 temp
 build-ios.ipa
+
+other-assets/
+
+.history

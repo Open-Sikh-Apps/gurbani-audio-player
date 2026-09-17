@@ -41,7 +41,7 @@ Copy an existing collection of the right `kind` (keep `languages` and `downloada
 | `audiobook` | tracks with `durationSec` + `byteSize`, optional `readAlongUrl` |
 | `radio` | tracks (no `durationSec` / `byteSize`; live streams) |
 
-Every `id` (author, reciter, scripture, collection, track, resource) must be unique across the whole file. New ids: `uuidgen`. `en` is required on every `L10nText`; add `pa` when you have it. No photos of Gursikhs.
+Every `id` (author, reciter, scripture, collection, track, resource) must be unique across the whole file. New ids: `uuidgen`. `en` is required on every `L10nText`; add `pa` when you have it.
 
 If you add a reciter or scripture, add those objects too. Home V1 only lists `sehaj_paath` grouped by scripture. Resources go in `resourceSections` + `resources` (`sectionId`).
 
