@@ -4,6 +4,14 @@ aaio sunan paRan kau baanee ||
 ### ਨਾਮੁ ਵਿਸਾਰਿ ਲਗਹਿ ਅਨ ਲਾਲਚਿ ਬਿਰਥਾ ਜਨਮੁ ਪਰਾਣੀ ॥੧॥ ਰਹਾਉ ॥
 naam visaar lageh an laalach birathaa janam paraanee ||1|| rahaau ||
 
+
+iOS 
+https://apps.apple.com/app/gurbani-audio-player/id6809691052
+
+Android 
+https://play.google.com/store/apps/details?id=com.opensikhapps.gurbaniaudioplayer
+
+
 #### Waheguru Ji Ka Khalsa, Waheguru Ji Ki Fateh jio,
 
 By Waheguru Ji's grace, we humbly present the Gurbani Audio Player app.
